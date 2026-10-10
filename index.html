@@ -1,113 +1,338 @@
+请你立刻停止之前所有的多文件逻辑。我已经自己写好了最终稳定版的单文件 index.html（代码如下）。请你：
+1. 删除你之前创建的所有 css/ 和 js/ 文件夹。
+2. 把仓库根目录的 index.html 内容，替换为下面这段我给你的完整代码。
+3. 不要做任何代码审查，不要修改任何一行代码，不要拆分成文件，只负责原封不动地推送到 main 分支。
+4. 推送后给我 Commit SHA，并告诉我 GitHub Pages 生效时间。
+
+<!-- 完整代码：index.html 开始 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>扑克游戏 · 好友联机对战</title>
-<link rel="stylesheet" href="./css/style.css">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>德州扑克 · 好友联机</title>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+:root{--felt:#1d6b45;--felt2:#123f2a;--gold:#e8c66a;--bg:#0e1a14;--panel:#16281f;--line:#2c4a3a;--txt:#eef5ef;--dim:#9db3a5;--red:#e05252;--blue:#3c6ea3;}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;min-height:100%;background:var(--bg);color:var(--txt);font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;font-size:15px;}
+.screen{display:none;min-height:100vh;flex-direction:column;}
+.screen.on{display:flex;}
+button{font-family:inherit;font-size:15px;border:none;border-radius:8px;padding:10px 16px;cursor:pointer;color:#fff;background:#2e6e4e;transition:all .15s;}
+button:active{transform:scale(.97);}
+button:disabled{opacity:.4;cursor:default;}
+input,select{font-family:inherit;font-size:16px;padding:10px;border-radius:8px;border:1px solid var(--line);background:#0c1811;color:var(--txt);width:100%;margin-bottom:10px;}
+.btn-gold{background:linear-gradient(#d9b45c,#b98f34);color:#221a05;font-weight:700;}
+.btn-red{background:#a33c3c;}
+.btn-blue{background:var(--blue);}
+.btn-gray{background:#3a4a40;}
+.muted{color:var(--dim);font-size:13px;}
+.card-panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:12px;max-width:450px;width:90%;}
+#table{background:radial-gradient(ellipse at center,var(--felt) 0%,var(--felt2) 78%);margin:8px;border-radius:20px;border:3px solid #0a2c1c;flex:1;display:flex;flex-direction:column;position:relative;padding:10px;overflow:hidden;}
+.opponents{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;}
+.opp{background:rgba(10,22,15,.85);border:1px solid var(--line);border-radius:10px;padding:6px;min-width:80px;text-align:center;transition:all .2s;}
+.opp.turn{border-color:var(--gold);box-shadow:0 0 10px rgba(232,198,106,.65);}
+.opp.fold{opacity:.4;}
+.board{text-align:center;margin:auto 0;}
+.pot{font-size:18px;color:var(--gold);font-weight:700;margin-bottom:10px;}
+.cards{display:flex;gap:6px;justify-content:center;min-height:62px;}
+.card-ui{width:44px;height:62px;border-radius:6px;background:#fff;color:#151515;font-weight:700;display:flex;flex-direction:column;justify-content:space-between;padding:4px;font-size:16px;box-shadow:0 2px 6px rgba(0,0,0,.5);position:relative;}
+.card-ui.red{color:#d33;}
+.card-ui.back{background:repeating-linear-gradient(45deg,#1a3a6e,#1a3a6e 4px,#274e8a 4px,#274e8a 8px);border:2px solid #fff;color:transparent;}
+.card-ui.sm{width:32px;height:46px;font-size:12px;padding:2px;}
+#actionBar{background:#0b140f;border-top:1px solid var(--line);padding:10px;}
+.act-row{display:flex;gap:8px;margin-bottom:8px;}
+.act-btn{flex:1;min-height:48px;font-weight:600;font-size:16px;}
+</style>
 </head>
 <body>
 
-<!-- ============================================================
-     首页
-     ============================================================ -->
-<div id="scrHome" class="screen on">
-  <div class="home-card">
-    <div class="logo">♠ ♥ ♣ ♦</div>
-    <h1 style="font-size:22px;">扑克游戏 · 好友联机</h1>
-    <p class="muted">一人开房，把链接发到微信群，朋友点开即玩。<br>仅限虚拟筹码娱乐局。</p>
-
-    <input id="inpName" maxlength="12" placeholder="你的昵称">
-
-    <!-- 仅房主可见（被邀请者通过 URL 参数隐藏） -->
-    <div id="hostOnlySection">
-      <div class="mode-pick">
-        <input type="radio" name="mode" id="modeCash" value="cash" checked>
-        <label for="modeCash">🎯 积分娱乐<br><span class="muted">自由带入，无限重买</span></label>
-        <input type="radio" name="mode" id="modeMtt" value="mtt">
-        <label for="modeMtt">🏆 锦标赛<br><span class="muted">盲注递增，有限带入</span></label>
-      </div>
-      <button id="btnCreate" class="btn-gold" style="width:100%;margin-top:8px;">创建房间（当房主）</button>
-      <hr>
+<!-- 首页 -->
+<div id="scrHome" class="screen on" style="align-items:center;justify-content:center;">
+  <div class="card-panel">
+    <h1 style="text-align:center;color:var(--gold);margin:0 0 10px;">♠ ♥ ♣ ♦</h1>
+    <h2 style="text-align:center;margin:0 0 20px;">德州扑克 · 好友联机</h2>
+    <input id="inpName" placeholder="输入你的昵称" maxlength="10">
+    <div id="hostSection">
+      <button class="btn-gold" style="width:100%;padding:14px;font-size:16px;" onclick="createRoom()">创建房间（仅房主）</button>
+      <p class="muted" style="text-align:center;margin-top:10px;">创建后复制链接发给朋友，他们点开即可申请加入</p>
     </div>
-
-    <div class="home-row">
-      <input id="inpCode" maxlength="5" placeholder="房间码" style="text-transform:uppercase;">
-      <button id="btnJoin" class="btn-blue">加入房间</button>
+    <div id="joinSection" style="display:none;">
+      <p style="text-align:center;color:var(--gold);">房间号：<b id="joinCodeDisplay"></b></p>
+      <button class="btn-blue" style="width:100%;padding:14px;font-size:16px;" onclick="joinRoom()">申请加入房间</button>
     </div>
-
-    <p class="muted" id="homeErr" style="color:var(--red);min-height:18px;"></p>
   </div>
 </div>
 
-<!-- ============================================================
-     大厅
-     ============================================================ -->
-<div id="scrLobby" class="screen">
-  <div class="share-box">
-    <h3 style="font-size:16px;">房间码：<span id="lbCode" style="color:var(--gold);"></span> <span id="lbModeTag" style="font-size:12px;"></span></h3>
-    <p class="muted">把下面的链接发到微信群，朋友打开后输昵称即可加入：</p>
-    <input id="lbUrl" readonly onclick="this.select()">
-    <div style="display:flex;gap:8px;margin-top:8px;">
-      <button id="btnCopy" class="btn-gold" style="flex:1;">复制链接</button>
-      <button id="btnLeave" class="btn-gray">退出房间</button>
+<!-- 大厅 -->
+<div id="scrLobby" class="screen" style="padding:12px;align-items:center;">
+  <div class="card-panel">
+    <h3 style="margin:0 0 8px;">房间号：<span id="lbCode" style="color:var(--gold);"></span></h3>
+    <input id="lbUrl" readonly style="font-size:12px;color:var(--gold);" onclick="this.select()">
+    <button class="btn-blue" style="width:100%;" onclick="copyLink()">复制链接发给朋友</button>
+  </div>
+  
+  <div class="card-panel" id="hostSettings" style="display:none;">
+    <h3 style="margin:0 0 10px;">游戏设置（房主）</h3>
+    <label>模式：</label>
+    <select id="setType">
+      <option value="cash">积分赛（现金局，输光可重买）</option>
+      <option value="mtt">锦标赛（MTT，盲注递增）</option>
+    </select>
+    <label>初始筹码：</label>
+    <input type="number" id="setChips" value="2000" step="500">
+    <label>盲注（小/大）：</label>
+    <div style="display:flex;gap:8px;">
+      <input type="number" id="setSb" value="10">
+      <input type="number" id="setBb" value="20">
     </div>
   </div>
-  <h3 style="font-size:16px;">玩家（<span id="lbCount"></span>/8）</h3>
-  <div class="plist" id="lbPlayers"></div>
-  <div class="settings" id="lbSettings"></div>
-  <div id="lbBottom"></div>
+
+  <div class="card-panel">
+    <h3 style="margin:0 0 8px;">玩家列表 (<span id="lbCount">0</span>/8)</h3>
+    <div id="lbPlayers" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+  </div>
+
+  <div class="card-panel" id="approveList" style="display:none;border-color:var(--gold);">
+    <h3 style="color:var(--gold);margin:0 0 8px;">等待批准</h3>
+    <div id="lbRequests"></div>
+  </div>
+
+  <div id="lbBottom" style="width:90%;max-width:450px;"></div>
 </div>
 
-<!-- ============================================================
-     牌桌
-     ============================================================ -->
+<!-- 牌桌 -->
 <div id="scrGame" class="screen">
-  <div id="topbar">
+  <div style="padding:6px 12px;background:#0b140f;border-bottom:1px solid var(--line);font-size:12px;display:flex;justify-content:space-between;align-items:center;">
     <span>房间 <b id="gCode"></b></span>
-    <span>第 <b id="gHand"></b> 局</span>
-    <span id="gLevelWrap" style="display:none;">等级 <b id="gLevel"></b></span>
+    <span>底池 <b id="gPot" style="color:var(--gold);">0</b></span>
     <span>盲注 <b id="gBlinds"></b></span>
-    <span id="gPhase"></span>
-    <button id="btnLog" class="btn-gray" style="margin-left:auto;padding:4px 10px;font-size:12px;min-height:32px;">日志</button>
+    <button class="btn-gray" style="padding:2px 10px;font-size:11px;width:auto;" onclick="location.reload()">退出</button>
   </div>
-  <div id="tableWrap">
-    <div id="levelBar" style="display:none;"></div>
-    <div id="opponents"></div>
-    <div id="boardArea">
-      <div id="potLine"></div>
-      <div id="boardCards"></div>
-      <div id="streetLine"></div>
+  <div id="table">
+    <div class="opponents" id="opponents"></div>
+    <div class="board">
+      <div class="pot" id="potLine"></div>
+      <div class="cards" id="boardCards"></div>
     </div>
   </div>
-  <div id="myArea">
-    <div id="myCards"></div>
-    <div id="myInfo"></div>
+  <div style="padding:8px 12px;background:#0b140f;display:flex;align-items:center;gap:10px;">
+    <div class="cards" id="myCards"></div>
+    <div id="myInfo" style="font-size:13px;color:var(--dim);flex:1;"></div>
   </div>
-  <div id="actionBar"></div>
+  <div id="actionBar" style="display:none;">
+    <div class="act-row">
+      <button class="btn-red act-btn" onclick="sendAct('fold')">弃牌</button>
+      <button class="btn-gray act-btn" onclick="sendAct('check')">过牌</button>
+      <button class="btn-blue act-btn" onclick="sendAct('call')">跟注</button>
+      <button class="btn-gold act-btn" onclick="sendAct('raise')">加注</button>
+      <button class="btn-gold act-btn" onclick="sendAct('allin')">全下</button>
+    </div>
+  </div>
 </div>
 
-<!-- ============================================================
-     全局浮层
-     ============================================================ -->
-<div id="winBanner"></div>
-<div id="logPanel"></div>
-<div id="overlay"><div class="ov-card" id="ovCard"></div></div>
-<div id="toast"></div>
+<script>
+/* ================== 核心引擎 ================== */
+const RANKS = {14:'A',13:'K',12:'Q',11:'J',10:'10',9:'9',8:'8',7:'7',6:'6',5:'5',4:'4',3:'3',2:'2'};
+const SUITS = ['♠','♥','♦','♣'];
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+function makeDeck(){const d=[];SUITS.forEach(s=>{for(let r=2;r<=14;r++)d.push({r,s});});return shuffle(d);}
+function cardHTML(c,small){if(!c)return '<div class="card-ui back '+(small?'sm':'')+'">?</div>';const col=(c.s==='♥'||c.s==='♦')?'red':'';return '<div class="card-ui '+col+' '+(small?'sm':'')+'"><div>'+RANKS[c.r]+'</div><div style="align-self:flex-end;">'+c.s+'</div></div>';}
+function getHandScore(cards){ // 7张牌选5张最强
+  let best=null;
+  const combos=[];
+  function combine(start,arr){if(arr.length===5){combos.push(arr.slice());return;}for(let i=start;i<cards.length;i++){arr.push(cards[i]);combine(i+1,arr);arr.pop();}}
+  combine(0,[]);
+  combos.forEach(hand=>{
+    const sc=eval5(hand);
+    if(!best||compareScore(sc,best)>0)best=sc;
+  });
+  return best;
+}
+function eval5(cards){
+  const r=cards.map(c=>c.r).sort((a,b)=>b-a);
+  const s=cards.map(c=>c.s);
+  const flush=s[0]===s[1]&&s[1]===s[2]&&s[2]===s[3]&&s[3]===s[4];
+  const cnt={};r.forEach(x=>cnt[x]=(cnt[x]||0)+1);
+  const groups=Object.keys(cnt).map(v=>({v:+v,c:cnt[v]})).sort((a,b)=>b.c-a.c||b.v-a.v);
+  const uniq=[...new Set(r)];
+  let straight=0;
+  if(uniq.length===5){
+    if(uniq[0]-uniq[4]===4)straight=uniq[0];
+    else if(uniq[0]===14&&uniq[1]===5&&uniq[2]===4&&uniq[3]===3&&uniq[4]===2)straight=5;
+  }
+  if(straight&&flush)return[8,straight];
+  if(groups[0].c===4)return[7,groups[0].v,groups[1].v];
+  if(groups[0].c===3&&groups[1].c===2)return[6,groups[0].v];
+  if(flush)return[5,...r];
+  if(straight)return[4,straight];
+  if(groups[0].c===3)return[3,groups[0].v,groups[1].v,groups[2].v];
+  if(groups[0].c===2&&groups[1].c===2)return[2,groups[0].v,groups[1].v,groups[2].v];
+  if(groups[0].c===2)return[1,groups[0].v,groups[1].v,groups[2].v,groups[3].v];
+  return[0,...r];
+}
+function compareScore(a,b){for(let i=0;i<6;i++){const x=a[i]||0,y=b[i]||0;if(x!==y)return x-y;}return 0;}
 
-<!-- ============================================================
-     JS 加载顺序（严格）：
-     1. PeerJS CDN（第三方依赖）
-     2. socket.js（网络层，依赖 PeerJS）
-     3. game-logic.js（游戏逻辑，依赖 Net）
-     4. ui.js（渲染层，依赖 Game）
-     5. main.js（胶水层，依赖以上所有）
-     ============================================================ -->
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
-<script src="./js/socket.js"></script>
-<script src="./js/game-logic.js"></script>
-<script src="./js/ui.js"></script>
-<script src="./js/main.js"></script>
+/* ================== 全局状态 ================== */
+let peer=null,conn=null,isHost=false,myId='p'+Math.random().toString(36).substr(2,6),roomCode='',gameState=null,myName='';
+let myCards=[],myTurn=false;
 
+/* ================== 页面控制 ================== */
+function showScr(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on'));document.getElementById(id).classList.add('on');}
+window.onload=()=>{
+  const params=new URLSearchParams(location.search);
+  roomCode=params.get('room');
+  if(roomCode){document.getElementById('hostSection').style.display='none';document.getElementById('joinSection').style.display='block';document.getElementById('joinCodeDisplay').innerText=roomCode;}
+  document.getElementById('inpName').value=localStorage.getItem('pokerName')||'';
+};
+function createRoom(){
+  myName=document.getElementById('inpName').value.trim()||'房主';localStorage.setItem('pokerName',myName);
+  roomCode=Math.random().toString(36).substr(2,5).toUpperCase();isHost=true;
+  gameState={phase:'lobby',players:[{id:'host',name:myName,chips:2000,bet:0,folded:false,connected:true,isHost:true}],requests:[],pot:0,board:[],currentTurn:null,settings:{type:'cash',chips:2000,sb:10,bb:20}};
+  initPeer(true);showScr('scrLobby');document.getElementById('hostSettings').style.display='block';
+  document.getElementById('lbCode').innerText=roomCode;document.getElementById('lbUrl').value=location.origin+location.pathname+'?room='+roomCode;renderLobby();
+}
+function joinRoom(){
+  myName=document.getElementById('inpName').value.trim()||'玩家';localStorage.setItem('pokerName',myName);
+  initPeer(false);
+}
+
+/* ================== 网络层 ================== */
+function initPeer(asHost){
+  if(peer)peer.destroy();
+  peer=new Peer(asHost?'poker-host-'+roomCode:undefined,{debug:1});
+  peer.on('open',()=>{
+    if(!asHost){
+      conn=peer.connect('poker-host-'+roomCode);
+      conn.on('open',()=>{conn.send({type:'join_request',name:myName,id:myId});showScr('scrLobby');document.getElementById('lbCode').innerText=roomCode;document.getElementById('lbUrl').value=location.origin+location.pathname+'?room='+roomCode;renderLobby();});
+      conn.on('data',data=>handleServerMsg(data));
+      conn.on('close',()=>alert('与房主断开连接，请刷新重试'));
+    }
+  });
+  if(asHost){
+    peer.on('connection',c=>{
+      c.on('data',data=>{
+        if(data.type==='join_request'){gameState.requests.push({id:data.id,name:data.name,conn:c});renderLobby();}
+        else if(data.type==='action'){handlePlayerAction(data.id,data.action);}
+      });
+      c.on('close',()=>{const p=gameState.players.find(p=>p.conn===c);if(p){p.connected=false;renderLobby();}});
+    });
+  }
+}
+
+/* ================== 房主审批 ================== */
+function approvePlayer(reqId){
+  const req=gameState.requests.find(r=>r.id===reqId);if(!req)return;
+  gameState.players.push({id:req.id,name:req.name,chips:gameState.settings.chips,bet:0,folded:false,connected:true,isHost:false,conn:req.conn});
+  gameState.requests=gameState.requests.filter(r=>r.id!==reqId);
+  req.conn.send({type:'approved',settings:gameState.settings});renderLobby();broadcastState();
+}
+function rejectPlayer(reqId){
+  const req=gameState.requests.find(r=>r.id===reqId);
+  if(req){req.conn.send({type:'rejected'});gameState.requests=gameState.requests.filter(r=>r.id!==reqId);renderLobby();}
+}
+
+/* ================== 大厅渲染 ================== */
+function renderLobby(){
+  document.getElementById('lbCount').innerText=gameState.players.length;
+  document.getElementById('lbPlayers').innerHTML=gameState.players.map(p=>`<div style="padding:6px 12px;background:#1d3a2a;border-radius:20px;font-size:14px;${p.isHost?'border:1px solid var(--gold);':''}">${p.isHost?'👑 ':''}${p.name} <b style="color:var(--gold);">${p.chips}</b></div>`).join('');
+  const approveList=document.getElementById('approveList'),lbRequests=document.getElementById('lbRequests');
+  if(isHost&&gameState.requests.length>0){
+    approveList.style.display='block';
+    lbRequests.innerHTML=gameState.requests.map(r=>`<div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;padding:8px;background:#0e1a14;border-radius:8px;"><span>${r.name} 请求加入</span><div><button class="btn-gold" style="padding:4px 12px;font-size:13px;width:auto;" onclick="approvePlayer('${r.id}')">批准</button><button class="btn-red" style="padding:4px 12px;font-size:13px;width:auto;" onclick="rejectPlayer('${r.id}')">拒绝</button></div></div>`).join('');
+  }else{approveList.style.display='none';}
+  const lbBottom=document.getElementById('lbBottom');
+  lbBottom.innerHTML=isHost?`<button class="btn-gold" style="width:100%;padding:14px;font-size:16px;" onclick="startGame()" ${gameState.players.length<2?'disabled':''}>开始游戏 (${gameState.players.length}人)</button>`:`<p class="muted" style="text-align:center;">等待房主开始游戏...</p>`;
+}
+
+/* ================== 开始游戏 ================== */
+function startGame(){
+  if(gameState.players.length<2)return;
+  const deck=makeDeck();
+  gameState.phase='playing';gameState.pot=0;gameState.board=[];
+  gameState.players.forEach((p,i)=>{p.cards=[deck.pop(),deck.pop()];p.folded=false;p.bet=0;p.lastAction='';
+    if(i===0){p.bet=gameState.settings.sb;p.chips-=gameState.settings.sb;gameState.pot+=gameState.settings.sb;}
+    if(i===1){p.bet=gameState.settings.bb;p.chips-=gameState.settings.bb;gameState.pot+=gameState.settings.bb;}
+  });
+  gameState.currentTurn=gameState.players[2%gameState.players.length].id;
+  broadcastState();
+}
+
+/* ================== 状态广播（防作弊核心） ================== */
+function getViewFor(playerId){
+  const me=gameState.players.find(p=>p.id===playerId);if(!me)return null;
+  return{
+    phase:gameState.phase,pot:gameState.pot,board:gameState.board,
+    players:gameState.players.map(p=>({
+      id:p.id,name:p.name,chips:p.chips,folded:p.folded,bet:p.bet,isHost:p.isHost,connected:p.connected,lastAction:p.lastAction,
+      cards:(p.id===playerId||gameState.phase==='result')?p.cards:[null,null] // 关键：只有自己或摊牌才发送底牌
+    })),
+    myCards:me.cards, isMyTurn:gameState.currentTurn===playerId,
+    settings:gameState.settings, currentTurn:gameState.currentTurn
+  };
+}
+function broadcastState(){
+  if(isHost)renderGame();
+  gameState.players.forEach(p=>{if(p.conn)p.conn.send({type:'state',view:getViewFor(p.id)});});
+}
+
+/* ================== 渲染牌桌 ================== */
+function renderGame(){
+  showScr('scrGame');
+  const v=isHost?getViewFor('host'):window._clientView;if(!v)return;
+  document.getElementById('gCode').innerText=roomCode;document.getElementById('gPot').innerText=v.pot;document.getElementById('gBlinds').innerText=v.settings.sb+'/'+v.settings.bb;document.getElementById('potLine').innerText='底池 '+v.pot;
+  document.getElementById('opponents').innerHTML=v.players.filter(p=>p.id!==(isHost?'host':myId)).map(p=>`<div class="opp ${p.folded?'fold':''} ${v.currentTurn===p.id?'turn':''}"><div style="font-size:13px;">${p.name} ${p.isHost?'👑':''}</div><div style="color:var(--gold);font-size:12px;">${p.chips}</div><div style="font-size:11px;color:#ffd97a;">${p.lastAction||''} ${p.bet>0?'('+p.bet+')':''}</div><div style="margin-top:4px;display:flex;gap:2px;justify-content:center;">${p.cards.map(c=>cardHTML(c,true)).join('')}</div></div>`).join('');
+  document.getElementById('boardCards').innerHTML=v.board.map(c=>cardHTML(c,false)).join('')||'<span class="muted">等待发牌</span>';
+  document.getElementById('myCards').innerHTML=v.myCards.map(c=>cardHTML(c,false)).join('');
+  const me=v.players.find(p=>p.id===(isHost?'host':myId));
+  document.getElementById('myInfo').innerHTML=`你的筹码: <b style="color:var(--gold);">${me.chips}</b> ${v.isMyTurn?'<span style="color:var(--gold);">(轮到你了)</span>':''}`;
+  document.getElementById('actionBar').style.display=(v.isMyTurn&&v.phase==='playing')?'block':'none';
+}
+
+/* ================== 玩家操作 ================== */
+function sendAct(action){if(isHost)handlePlayerAction('host',action);else conn.send({type:'action',id:myId,action});}
+function handlePlayerAction(playerId,action){
+  if(gameState.phase!=='playing')return;
+  const p=gameState.players.find(pl=>pl.id===playerId);if(!p||p.folded||gameState.currentTurn!==playerId)return;
+  const maxBet=Math.max(...gameState.players.map(pl=>pl.bet));const toCall=maxBet-p.bet;
+  if(action==='fold'){p.folded=true;p.lastAction='弃牌';}
+  else if(action==='check'){if(toCall>0)return;p.lastAction='过牌';}
+  else if(action==='call'){if(toCall<=0)return;const pay=Math.min(toCall,p.chips);p.chips-=pay;p.bet+=pay;gameState.pot+=pay;p.lastAction='跟注';}
+  else if(action==='raise'){const raiseAmt=gameState.settings.bb*2;const total=toCall+raiseAmt;const pay=Math.min(total,p.chips);p.chips-=pay;p.bet+=pay;gameState.pot+=pay;p.lastAction='加注到'+p.bet;}
+  else if(action==='allin'){gameState.pot+=p.chips;p.bet+=p.chips;p.chips=0;p.lastAction='全下';}
+
+  const active=gameState.players.filter(pl=>!pl.folded);
+  if(active.length<=1){endHand(active);return;}
+  if(active.every(pl=>pl.bet===Math.max(...active.map(x=>x.bet))&&pl.lastAction!=='')){
+    if(gameState.board.length===0){gameState.board.push(...[makeDeck().pop(),makeDeck().pop(),makeDeck().pop()]);gameState.players.forEach(pl=>{pl.bet=0;pl.lastAction='';});}
+    else if(gameState.board.length===3){gameState.board.push(makeDeck().pop());gameState.players.forEach(pl=>{pl.bet=0;pl.lastAction='';});}
+    else if(gameState.board.length===4){gameState.board.push(makeDeck().pop());gameState.players.forEach(pl=>{pl.bet=0;pl.lastAction='';});}
+    else if(gameState.board.length===5){endHand(active);return;}
+  }
+  const curIdx=gameState.players.findIndex(pl=>pl.id===playerId);let nextIdx=(curIdx+1)%gameState.players.length;
+  while(gameState.players[nextIdx].folded)nextIdx=(nextIdx+1)%gameState.players.length;
+  gameState.currentTurn=gameState.players[nextIdx].id;broadcastState();
+}
+function endHand(active){
+  gameState.phase='result';
+  let winner=active[0];
+  if(active.length>1){
+    let best=null;
+    active.forEach(p=>{const sc=getHandScore(p.cards.concat(gameState.board));if(!best||compareScore(sc,best)>0){best=sc;winner=p;}});
+  }
+  winner.chips+=gameState.pot;gameState.pot=0;
+  broadcastState();
+  setTimeout(()=>alert('本局结束！赢家是：'+winner.name),300);
+}
+
+/* ================== 客户端接收 ================== */
+function handleServerMsg(data){
+  if(data.type==='approved'){alert('房主已批准加入！');gameState={settings:data.settings};}
+  else if(data.type==='rejected'){alert('房主拒绝了你的加入请求');location.reload();}
+  else if(data.type==='state'){window._clientView=data.view;renderGame();}
+}
+function copyLink(){const url=document.getElementById('lbUrl');url.select();document.execCommand('copy');alert('链接已复制，去微信发给朋友吧！');}
+</script>
 </body>
 </html>
+<!-- 完整代码：index.html 结束 -->
