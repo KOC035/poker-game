@@ -201,6 +201,13 @@
             + '<button class="btn-gray" onclick="location.reload()">返回</button>'
           );
         },
+        onDissolved: function() {
+          UI.showOverlay(
+            '<h2>房间已解散</h2>'
+            + '<p>房主已解散房间。</p>'
+            + '<button class="btn-gray" onclick="location.reload()">返回首页</button>'
+          );
+        },
         onError: function(type) {
           if (type === 'peer-unavailable') {
             UI.showToast('房间不存在，或房主已离线');
@@ -318,6 +325,19 @@
       if (!started) {
         UI.showToast('至少需要 2 名未淘汰玩家才能开局');
       }
+    },
+
+    /**
+     * 解散房间
+     */
+    dissolveRoom: function() {
+      // 通知所有客户端房间已解散
+      Net.hostBroadcast({ t: 'room-dissolved' });
+      // 清理状态
+      Net.destroyRoom();
+      Game.H = null;
+      // 返回首页
+      location.reload();
     },
 
     hostNext: function() {

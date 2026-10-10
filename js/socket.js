@@ -196,6 +196,7 @@
      */
     createRoom: function(name, mode, callbacks) {
       var self = this;
+      this.me.id = 'host';  // 房主 ID 固定为 'host'，与 game-logic 中的 playerJoin 保持一致
       this.me.name = name;
       this.me.isHost = true;
       this.saveName(name);
@@ -501,6 +502,8 @@
             callbacks.onConnected && callbacks.onConnected(data.code || code);
           } else if (data && data.t === 'full') {
             callbacks.onFull && callbacks.onFull();
+          } else if (data && data.t === 'room-dissolved') {
+            callbacks.onDissolved && callbacks.onDissolved();
           }
         });
 

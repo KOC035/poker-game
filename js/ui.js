@@ -269,7 +269,8 @@
         bottomEl.innerHTML = reqHtml
           + '<button class="btn-gold" style="width:100%;padding:14px;font-size:17px;" data-action="host-start" '
           + (online < 2 ? 'disabled' : '')
-          + '>开始游戏' + (online < 2 ? '（至少 2 人在线）' : '（' + online + ' 人就位）') + '</button>';
+          + '>开始游戏' + (online < 2 ? '（至少 2 人在线）' : '（' + online + ' 人就位）') + '</button>'
+          + (Game.H && Game.H.handNo > 0 ? '<button class="btn-red" style="width:100%;margin-top:8px;padding:12px;" data-action="dissolve-room">解散房间</button>' : '');
       }
     } else {
       var desc = s.mode === 'mtt'
@@ -841,9 +842,14 @@
           handleActionBarAction(action, null, kind);
           break;
 
-        // --- 大厅 ---
+        // --- 房间管理 ---
         case 'host-start':
           if (global.App && global.App.hostStart) global.App.hostStart();
+          break;
+        case 'dissolve-room':
+          if (confirm('确定要解散房间吗？所有玩家将被踢出。')) {
+            if (global.App && global.App.dissolveRoom) global.App.dissolveRoom();
+          }
           break;
         case 'ping-start':
           Net.sendToHost({ t: 'startReq' });
