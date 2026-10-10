@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>扑克游戏 · 好友联机对战</title>
+<link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+
+<!-- ============================================================
+     首页
+     ============================================================ -->
+<div id="scrHome" class="screen on">
+  <div class="home-card">
+    <div class="logo">♠ ♥ ♣ ♦</div>
+    <h1 style="font-size:22px;">扑克游戏 · 好友联机</h1>
+    <p class="muted">一人开房，把链接发到微信群，朋友点开即玩。<br>仅限虚拟筹码娱乐局。</p>
+
+    <input id="inpName" maxlength="12" placeholder="你的昵称">
+
+    <!-- 仅房主可见（被邀请者通过 URL 参数隐藏） -->
+    <div id="hostOnlySection">
+      <div class="mode-pick">
+        <input type="radio" name="mode" id="modeCash" value="cash" checked>
+        <label for="modeCash">🎯 积分娱乐<br><span class="muted">自由带入，无限重买</span></label>
+        <input type="radio" name="mode" id="modeMtt" value="mtt">
+        <label for="modeMtt">🏆 锦标赛<br><span class="muted">盲注递增，有限带入</span></label>
+      </div>
+      <button id="btnCreate" class="btn-gold" style="width:100%;margin-top:8px;">创建房间（当房主）</button>
+      <hr>
+    </div>
+
+    <div class="home-row">
+      <input id="inpCode" maxlength="5" placeholder="房间码" style="text-transform:uppercase;">
+      <button id="btnJoin" class="btn-blue">加入房间</button>
+    </div>
+
+    <p class="muted" id="homeErr" style="color:var(--red);min-height:18px;"></p>
+  </div>
+</div>
+
+<!-- ============================================================
+     大厅
+     ============================================================ -->
+<div id="scrLobby" class="screen">
+  <div class="share-box">
+    <h3 style="font-size:16px;">房间码：<span id="lbCode" style="color:var(--gold);"></span> <span id="lbModeTag" style="font-size:12px;"></span></h3>
+    <p class="muted">把下面的链接发到微信群，朋友打开后输昵称即可加入：</p>
+    <input id="lbUrl" readonly onclick="this.select()">
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button id="btnCopy" class="btn-gold" style="flex:1;">复制链接</button>
+      <button id="btnLeave" class="btn-gray">退出房间</button>
+    </div>
+  </div>
+  <h3 style="font-size:16px;">玩家（<span id="lbCount"></span>/8）</h3>
+  <div class="plist" id="lbPlayers"></div>
+  <div class="settings" id="lbSettings"></div>
+  <div id="lbBottom"></div>
+</div>
+
+<!-- ============================================================
+     牌桌
+     ============================================================ -->
+<div id="scrGame" class="screen">
+  <div id="topbar">
+    <span>房间 <b id="gCode"></b></span>
+    <span>第 <b id="gHand"></b> 局</span>
+    <span id="gLevelWrap" style="display:none;">等级 <b id="gLevel"></b></span>
+    <span>盲注 <b id="gBlinds"></b></span>
+    <span id="gPhase"></span>
+    <button id="btnLog" class="btn-gray" style="margin-left:auto;padding:4px 10px;font-size:12px;min-height:32px;">日志</button>
+  </div>
+  <div id="tableWrap">
+    <div id="levelBar" style="display:none;"></div>
+    <div id="opponents"></div>
+    <div id="boardArea">
+      <div id="potLine"></div>
+      <div id="boardCards"></div>
+      <div id="streetLine"></div>
+    </div>
+  </div>
+  <div id="myArea">
+    <div id="myCards"></div>
+    <div id="myInfo"></div>
+  </div>
+  <div id="actionBar"></div>
+</div>
+
+<!-- ============================================================
+     全局浮层
+     ============================================================ -->
+<div id="winBanner"></div>
+<div id="logPanel"></div>
+<div id="overlay"><div class="ov-card" id="ovCard"></div></div>
+<div id="toast"></div>
+
+<!-- ============================================================
+     JS 加载顺序（严格）：
+     1. PeerJS CDN（第三方依赖）
+     2. socket.js（网络层，依赖 PeerJS）
+     3. game-logic.js（游戏逻辑，依赖 Net）
+     4. ui.js（渲染层，依赖 Game）
+     5. main.js（胶水层，依赖以上所有）
+     ============================================================ -->
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="./js/socket.js"></script>
+<script src="./js/game-logic.js"></script>
+<script src="./js/ui.js"></script>
+<script src="./js/main.js"></script>
+
+</body>
+</html>
