@@ -147,6 +147,8 @@
 
   /**
    * 自己底牌翻牌动画
+   * 卡牌初始渲染为牌背朝上（带 .flip class），
+   * 此函数移除 .flip 使卡牌翻转到正面
    */
   function triggerMyFlip() {
     var mc = $('myCards');
@@ -155,9 +157,8 @@
     if (!cards) return;
     for (var i = 0; i < cards.length; i++) {
       if (cards[i] && cards[i].classList) {
+        // 卡牌已经带 .flip（牌背朝上），移除即翻到正面
         cards[i].classList.remove('flip');
-        void cards[i].offsetWidth;
-        cards[i].classList.add('flip');
       }
     }
   }
@@ -429,17 +430,18 @@
     var mp = null;
     for (var i = 0; i < ps.length; i++) { if (ps[i].id === Net.getMyId()) { mp = ps[i]; break; } }
 
-    // 底牌
+    // 底牌 — 渲染为牌背朝上（faceDown=true），然后翻牌动画揭示
     var myCardsHtml = '';
     var myCardKey = '';
     if (mp && mp.cards && mp.cards.length) {
-      for (var ci = 0; ci < mp.cards.length; ci++) myCardsHtml += cardHTML(mp.cards[ci], false);
+      for (var ci = 0; ci < mp.cards.length; ci++) myCardsHtml += cardHTML(mp.cards[ci], false, true);
       myCardKey = mp.cards.map(function(c) { return c.r + '' + c.s; }).join(',');
     }
 
     mc.innerHTML = myCardsHtml;
-    // 新牌翻牌动画
-    if (myCardKey !== _lastMyCardKey && _lastMyCardKey !== '' && myCardKey !== '') {
+    // 新牌翻牌动画：只要底牌变化就触发（包括首次发牌）
+    if (myCardKey !== _lastMyCardKey && myCardKey !== '') {
+      // 延迟一帧确保 DOM 已渲染，然后移除 .flip 翻到正面
       requestAnimationFrame(triggerMyFlip);
     }
     _lastMyCardKey = myCardKey;
@@ -812,6 +814,9 @@
     document.addEventListener('click', function(e) {
       var btn = e.target.closest('[data-action]');
       if (!btn) return;
+
+      // 禁用按钮不响应点击
+      if (btn.disabled || btn.getAttribute('disabled') !== null) return;
 
       var action = btn.getAttribute('data-action');
       var target = btn.getAttribute('data-target');

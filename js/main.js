@@ -274,6 +274,13 @@
     // ============================================================
 
     hostStart: function() {
+      // 【前置校验】人数不足直接拦截，不做任何状态变更
+      var seated = Game.seated();
+      if (seated.length < 2) {
+        UI.showToast('至少需要 2 名在线玩家才能开局');
+        return;
+      }
+
       // 从 UI 读取设置（如果大厅有输入框）
       var startEl = document.getElementById('setStart');
       var sbEl = document.getElementById('setSb');

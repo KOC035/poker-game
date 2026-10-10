@@ -470,6 +470,13 @@
      * 发牌开始一手
      */
     startHand: function(parts) {
+      // 安全防线：不足 2 人绝不开局
+      if (!parts || parts.length < 2) {
+        this.H.phase = 'lobby';
+        this._notifyChange();
+        return;
+      }
+
       var H = this.H;
       H.handNo++;
       H.pendingRebuy = null;
