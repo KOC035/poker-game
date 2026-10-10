@@ -136,7 +136,6 @@ let myId = 'p' + Math.random().toString(36).substr(2, 6);
 let roomCode = '';
 let gameState = null;
 let myName = '';
-let myCards = [];
 let isMyTurn = false;
 
 const RANKS = {14:'A',13:'K',12:'Q',11:'J',10:'10',9:'9',8:'8',7:'7',6:'6',5:'5',4:'4',3:'3',2:'2'};
@@ -236,10 +235,14 @@ function initPeer(asHost) {
       conn = peer.connect('poker-host-' + roomCode);
       conn.on('open', () => {
         conn.send({ type: 'join_request', name: myName, id: myId });
+        // 手机端加入后，先显示大厅，但隐藏链接和玩家列表，显示等待批准
         showScr('scrLobby');
         $('lbCode').innerText = roomCode;
         $('lbUrl').value = location.origin + location.pathname + '?room=' + roomCode;
-        renderLobby();
+        $('hostSettings').style.display = 'none';
+        $('lbBottom').innerHTML = '<p class="muted center">正在等待房主批准...</p>';
+        $('lbPlayers').innerHTML = '<p class="muted center">批准后可见</p>';
+        $('approveList').style.display = 'none';
       });
       conn.on('data', data => handleServerMsg(data));
       conn.on('close', () => alert('与房主断开连接，请刷新重试'));
@@ -289,6 +292,8 @@ function rejectPlayer(reqId) {
 
 /* ================== 大厅渲染 ================== */
 function renderLobby() {
+  if(!isHost && gameState && gameState.phase === 'playing') return; // 手机端如果进入游戏了，不要覆盖大厅
+  
   $('lbCount').innerText = gameState.players.length;
   $('lbPlayers').innerHTML = gameState.players.map(p => `
     <div style="padding:6px 12px;background:#1d3a2a;border-radius:20px;font-size:14px;${p.isHost?'border:1px solid var(--gold);':''}">
@@ -316,13 +321,15 @@ function renderLobby() {
   if(isHost) {
     lbBottom.innerHTML = `<button class="btn-gold" style="width:100%;padding:16px;font-size:18px;" onclick="startGame()" ${gameState.players.length < 2 ? 'disabled' : ''}>开始游戏 (${gameState.players.length}人)</button>`;
   } else {
-    lbBottom.innerHTML = `<p class="muted center">等待房主开始游戏...</p>`;
+    if(gameState.players && gameState.players.length > 0) {
+      lbBottom.innerHTML = `<p class="muted center">等待房主开始游戏...</p>`;
+    }
   }
 }
 
 /* ================== 开始游戏 ================== */
 function startGame() {
-  if(gameState.players.length < 2) return;
+  if(gameState.players.length < 2) { toast('至少需要 2 名玩家才能开始游戏'); return; }
   const deck = makeDeck();
   gameState.phase = 'playing';
   gameState.pot = 0;
@@ -459,9 +466,21 @@ function endHand(active) {
 
 /* ================== 客户端接收 ================== */
 function handleServerMsg(data) {
-  if(data.type === 'approved') { toast('房主已批准加入！'); gameState = { settings: data.settings }; }
+  if(data.type === 'approved') { 
+    toast('房主已批准加入！'); 
+    gameState = { settings: data.settings, players: [], phase: 'lobby' }; 
+    // 通知房主发送完整状态
+  }
   else if(data.type === 'rejected') { alert('房主拒绝了你的加入请求'); location.reload(); }
-  else if(data.type === 'state') { window._clientView = data.view; renderGame(); }
+  else if(data.type === 'state') { 
+    window._clientView = data.view; 
+    if(data.view.phase === 'playing') {
+      renderGame();
+    } else {
+      gameState = data.view;
+      renderLobby();
+    }
+  }
 }
 
 function copyLink() {
