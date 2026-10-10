@@ -119,6 +119,9 @@
           if (result) {
             // 发送 welcome 消息
             Net.hostSend(info.id, { t: 'welcome', code: Net.roomCode, settings: Game.H.settings });
+            // 【关键修复】新玩家加入后立即广播视图，让所有人（包括新玩家）看到更新
+            self._broadcastViews();
+            Net.saveHostState(Game.H);
           }
         },
         onPlayerData: function(pid, data) {
@@ -144,8 +147,10 @@
         Net.saveHostState(Game.H);
       };
 
-      // 切换到等待状态（大厅）
-      // 第一次广播会在 tryStart 时触发
+      // 【关键修复】把房主加入玩家列表，并触发第一次广播渲染
+      // playerJoin 内部不调 _notifyChange，需要手动触发
+      Game.playerJoin('host', name);
+      this._broadcastViews();
     },
 
     // ============================================================
@@ -348,11 +353,12 @@
           var result = Game.playerJoin(info.id, info.name);
           if (result) {
             Net.hostSend(info.id, { t: 'welcome', code: Net.roomCode, settings: Game.H.settings });
-            // 如果在牌局中，立即发送当前视图
-            if (Game.H.phase !== 'lobby') {
-              var view = Game.viewFor(info.id);
-              Net.hostSend(info.id, { t: 'view', v: view });
-            }
+            // 立即发送当前视图给重连玩家
+            var view = Game.viewFor(info.id);
+            Net.hostSend(info.id, { t: 'view', v: view });
+            // 广播给所有人（包括本地 Host 刷新 UI）
+            self._broadcastViews();
+            Net.saveHostState(Game.H);
           }
         },
         onPlayerData: function(pid, data) {
