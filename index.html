@@ -255,7 +255,10 @@ const SIGNALING_SERVERS = [
 ];
 
 const PEER_PREFIX = 'poker-host-';
-const PEER_OPEN_TIMEOUT = 25000;   // 单个信令服务器的连接超时（毫秒）；留足公共实例冷启动时间
+// 单个信令服务器的连接超时（毫秒）。
+// 必须留足冷启动时间：onrender 免费实例闲置约 15 分钟会休眠，
+// 下一个人打开页面时它需要几十秒才能唤醒。超时太短会导致「第一个来的人永远连不上」。
+const PEER_OPEN_TIMEOUT = 45000;
 
 /** 显示连接状态；出错时同时弹浮层，避免用户已切到大厅时看不到 */
 function netStatus(msg, isError) {
@@ -348,7 +351,7 @@ function initPeer(asHost) {
       return;
     }
     const cfg = SIGNALING_SERVERS[idx++];
-    netStatus('正在连接信令服务器…');
+    netStatus(`正在连接信令服务器…（${idx}/${SIGNALING_SERVERS.length}，公共实例可能在冷启动，最多等 45 秒）`);
 
     let p;
     try {
