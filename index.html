@@ -274,10 +274,13 @@ function joinRoom() {
    留空表示跳过中继，直接用下面的公共 broker 兜底。 */
 const RELAYS = [];
 
-/* 公共 MQTT broker 兜底列表（可用性波动大，仅作备用） */
+/* 公共 MQTT broker 兜底列表（可用性波动极大，仅作备用；自建中继才是可靠方案）
+   实测记录：同一批 broker 曾出现「全部 0/5」，几十分钟后又恢复到「3/3」，
+   所以这里必须多列几个候选并由并行竞速挑选，不能只依赖一台。 */
 const BROKERS = [
-  'wss://broker.emqx.io:8084/mqtt',
-  'wss://broker.hivemq.com:8884/mqtt',
+  'wss://broker.emqx.io:8084/mqtt',       // 实测 3/3，最快（约 1.3s）
+  'wss://mqtt-dashboard.com:8884/mqtt',   // 实测 3/3（约 4.6s）
+  'wss://broker.hivemq.com:8884/mqtt',    // 实测 1/3
   'wss://test.mosquitto.org:8081/',
   'wss://mqtt.eclipseprojects.io/mqtt',
 ];
@@ -535,15 +538,23 @@ function tryMqtt(url, asHost, onOk, onNo) {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
-    c.on('message', (topic, payload) => {
-      let data;
-      try { data = JSON.parse(payload); } catch (e) { return; }
-      onNetMessage(data, asHost);
-    });
-    onOk({
-      sendUp: (obj) => { try { c.publish(upTopic(), JSON.stringify(obj)); return true; } catch (e) { return false; } },
-      sendDown: (pid, obj) => { try { c.publish(downTopic(pid), JSON.stringify(obj)); return true; } catch (e) { return false; } },
-      close: () => { try { c.end(); } catch (e) {} },
+
+    // ⚠️ MQTT 是发布/订阅模型，必须【先订阅】对应话题才收得到消息 ——
+    // 自建中继是广播模型、不需要订阅，所以这一步只在 MQTT 通道里做。
+    // 漏掉它会导致「连接成功但永远收不到消息」，症状与二进制帧那个 bug 一样隐蔽。
+    const subTopic = asHost ? upTopic() : downTopic(myId);
+    c.subscribe(subTopic, { qos: 0 }, err => {
+      if (err) { try { c.end(); } catch (e) {} onNo(); return; }
+      c.on('message', (topic, payload) => {
+        let data;
+        try { data = JSON.parse(payload); } catch (e) { return; }
+        onNetMessage(data, asHost);
+      });
+      onOk({
+        sendUp: (obj) => { try { c.publish(upTopic(), JSON.stringify(obj)); return true; } catch (e) { return false; } },
+        sendDown: (pid, obj) => { try { c.publish(downTopic(pid), JSON.stringify(obj)); return true; } catch (e) { return false; } },
+        close: () => { try { c.end(); } catch (e) {} },
+      });
     });
   });
 
@@ -587,7 +598,7 @@ function raceChannels(asHost, onReady, onFail) {
 
     if (remaining === 0) { onFail(); return; }
 
-    list.forEach((ch) => {
+    list.forEach((ch, i) => {
       const ok = (channel) => {
         if (won) { try { channel.close(); } catch (e) {} return; }  // 已有赢家
         won = true;
@@ -603,8 +614,14 @@ function raceChannels(asHost, onReady, onFail) {
           else onFail();
         }
       };
-      if (ch.relay) tryRelay(ch.url, asHost, ok, no);
-      else tryMqtt(ch.url, asHost, ok, no);
+      // 按优先级错开启动（每档 400ms）：列表靠前的是实测更稳定的通道。
+      // 若全部同时起跑，胜出的往往只是「那一瞬间最快」的，而不是最可靠的 ——
+      // 而房主选中的通道会被写进分享链接，客户端只能跟它，选错代价很大。
+      setTimeout(() => {
+        if (won) return;
+        if (ch.relay) tryRelay(ch.url, asHost, ok, no);
+        else tryMqtt(ch.url, asHost, ok, no);
+      }, i * 400);
     });
   }
 
@@ -648,22 +665,30 @@ function initNet(asHost) {
     const idx = parseInt(cameFromLink.slice(1), 10);
     const url = kind === 'r' ? relayList()[idx] : BROKERS[idx];
     if (url) {
-      netStatus('正在连接中转服务器…');
-      let settled = false;
-      const ok = (channel) => {
-        if (settled) return;
-        settled = true;
-        channelTag = cameFromLink;
-        installChannel(channel);
-        onReady();
+      // 公共 broker 抖动很大，单次失败不代表不可用 —— 必须重试若干轮，
+      // 否则房主一旦竞速选中了抖动的那条，客户端就再也连不上了。
+      let round = 0;
+      const attempt = () => {
+        round += 1;
+        netStatus(`正在连接中转服务器…（第 ${round}/${RACE_ROUNDS} 次尝试）`);
+        let settled = false;
+        const ok = (channel) => {
+          if (settled) return;
+          settled = true;
+          channelTag = cameFromLink;
+          installChannel(channel);
+          onReady();
+        };
+        const no = () => {
+          if (settled) return;
+          settled = true;
+          if (round < RACE_ROUNDS) { setTimeout(attempt, RACE_RETRY_MS); return; }
+          netStatus('❌ 连不上房主所在的中转通道。可能是你的网络屏蔽了它 —— 换个网络（手机流量 ↔ WiFi）刷新重试，或让房主重新建房', true);
+        };
+        if (kind === 'r') tryRelay(url, asHost, ok, no);
+        else tryMqtt(url, asHost, ok, no);
       };
-      const no = () => {
-        if (settled) return;
-        settled = true;
-        netStatus('❌ 连不上房主所在的中转通道。可能是你的网络屏蔽了它 —— 换个网络（手机流量 ↔ WiFi）刷新重试，或让房主重新建房', true);
-      };
-      if (kind === 'r') tryRelay(url, asHost, ok, no);
-      else tryMqtt(url, asHost, ok, no);
+      attempt();
       return;
     }
     // 链接里的通道在本端不存在（例如房主用了自建中继而你没配置）→ 落到下面的竞速
