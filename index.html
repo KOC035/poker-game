@@ -135,7 +135,8 @@ input,select{font-family:inherit;font-size:16px;padding:12px;border-radius:8px;b
 
 <script>
 /* ================== 全局状态 ================== */
-let mqttClient = null;          // 当前 MQTT 连接
+let channelTag = '';            // 当前中转通道标识：'' | 'r<中继下标>' | 'm<broker下标>'
+let customRelay = '';           // 由 ?relay= 指定的自定义中继地址（会随分享链接传给朋友）
 let hostHeartbeatTimer = null;  // 房主心跳定时器
 let hostWatchdogTimer = null;   // 客户端「与房主失联」看门狗
 let lastHostMsgAt = 0;          // 客户端最后一次收到房主消息的时间
@@ -199,6 +200,13 @@ function getHandScore(cards) {
 window.onload = () => {
   const params = new URLSearchParams(location.search);
   roomCode = params.get('room');
+  // 房主选中的中转通道；客户端必须连同一条才能互通
+  const tParam = params.get('t');
+  if (tParam !== null && /^[rm]\d+$/.test(tParam)) {
+    channelTag = tParam;
+  }
+  // 自定义中继地址（来自 ?relay=）。用它就不必改代码，且会随分享链接一起传出去
+  customRelay = params.get('relay') || '';
   if(roomCode) {
     $('hostSection').style.display = 'none';
     $('joinSection').style.display = 'block';
@@ -234,39 +242,56 @@ function joinRoom() {
   initNet(false);
 }
 
-/* ================== 网络层（MQTT over WebSocket 中继） ==================
+/* ================== 网络层 ==================
 
-   为什么不再用 WebRTC P2P（这是上一版的失败原因）：
-     1. 跨网络不可靠 —— 手机 4G 与家用 WiFi 之间，运营商普遍使用 CGNAT / 对称 NAT，
-        STUN 打洞会失败，表现为「连接房主超时」。
-        ⚠️ 在同一台机器上开两个浏览器测试会走 host 候选直连成功，从而完全掩盖这个问题。
-     2. 微信内置浏览器（iOS WKWebView / Android X5）对 RTCPeerConnection 支持很差，
-        而需求明确要求「微信里点开链接就能进」。
+   三种方案都实际做过、也都踩过坑，记录在此避免重走：
 
-   本游戏只在两端之间传极小的 JSON 文本，中继转发完全够用，而且：
-     - 双方都是「主动外连」到 broker，不受任何 NAT / 防火墙限制
-     - 只依赖 WebSocket，所有浏览器（含微信内置）都支持
-     - 不需要 STUN / TURN / 自建信令服务器，零成本
+   ① WebRTC 点对点（初版）—— 不可用
+      手机 4G 与家用 WiFi 之间，运营商普遍使用 CGNAT / 对称 NAT，STUN 打洞失败，
+      表现为「连接房主超时」；且微信内置浏览器（iOS WKWebView / Android X5）
+      对 RTCPeerConnection 支持很差。
+      ⚠️ 最大的教训：在同一台电脑上开两个浏览器测试，会走 host 候选直连成功，
+         从而完全掩盖这个问题 —— 所以本项目后来的测试都强制经过真实公网。
 
-   话题设计（每房间双向，天然隔离）：
-     poker/<房间号>/up              客户端 → 房主：加入请求、出牌动作、掉线通知
-     poker/<房间号>/down/<玩家ID>    房主 → 指定客户端：批准、拒绝、状态、心跳
+   ② 公共 MQTT broker（次选）—— 不稳定，不能作唯一依赖
+      改成中继后 NAT 问题消失，但境外公共 broker 在国内网络下大面积不可用。
+      实测多轮原始 CONNECT 采样：broker.emqx.io 2/5、broker.hivemq.com 0/5、
+      test.mosquitto.org 0/5、mqtt.eclipseprojects.io 0/5，且随时间剧烈波动。
+
+   ③ 自建 WebSocket 中继（推荐）
+      服务器只做「同房间广播」、完全不理解业务，代码几十行、出错面最小。
+      部署方法与地址见 README 与 server/ 目录。
+
+   通道选择策略：
+     房主把所有候选通道【并行竞速】，取最先连上的那条；
+     选中的通道编码进分享链接（&t=r0 表示中继 0 号，&t=m1 表示 broker 1 号），
+     客户端据此连【同一条通道】—— 双方不在同一通道上就永远收不到对方消息。
+     全部失败会整体重试若干轮，以容忍公共服务的间歇性抖动。
 */
 
-/* 公共 MQTT broker，按顺序回退。两台均经实测可连通且能正常收发。 */
+/* 自建中继服务器（推荐）。部署后把地址填进来，例如：
+     const RELAYS = ['wss://poker-relay-xxxx.onrender.com/ws'];
+   留空表示跳过中继，直接用下面的公共 broker 兜底。 */
+const RELAYS = [];
+
+/* 公共 MQTT broker 兜底列表（可用性波动大，仅作备用） */
 const BROKERS = [
-  'wss://broker.emqx.io:8084/mqtt',      // EMQX 官方公共 broker（国内公司，优先）
-  'wss://broker.hivemq.com:8884/mqtt',   // HiveMQ 公共 broker，备用
+  'wss://broker.emqx.io:8084/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt',
+  'wss://test.mosquitto.org:8081/',
+  'wss://mqtt.eclipseprojects.io/mqtt',
 ];
 
 const TOPIC_PREFIX = 'poker';
-const CONNECT_TIMEOUT = 20000;   // 单台 broker 的连接超时
-const HOST_HEARTBEAT_MS = 8000;  // 房主心跳间隔
-const HOST_LOST_MS = 26000;      // 客户端超这么久没收到房主消息即判定失联
-const JOIN_RETRY_MS = 6000;      // 加入请求重发间隔
-const JOIN_RETRY_MAX = 6;        // 最多重发次数
+const CONNECT_TIMEOUT = 9000;   // 单条通道的连接超时（并行竞速，不必留长）
+const RACE_ROUNDS = 3;          // 全部通道失败后整体重试的轮数
+const RACE_RETRY_MS = 2500;     // 轮与轮之间的间隔
+const HOST_HEARTBEAT_MS = 8000; // 房主心跳间隔
+const HOST_LOST_MS = 26000;     // 客户端超这么久没收到房主消息即判定失联
+const JOIN_RETRY_MS = 6000;     // 加入请求重发间隔
+const JOIN_RETRY_MAX = 6;       // 最多重发次数
 
-/** 房间号：8 位。公共 broker 上话题是公开的，号码越长越不容易被猜中偷看 */
+/** 房间号：8 位。公共通道上房间名是公开的，越长越不容易被猜中偷看 */
 function makeRoomCode() {
   const chars = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
   let s = '';
@@ -276,6 +301,13 @@ function makeRoomCode() {
 
 function upTopic() { return TOPIC_PREFIX + '/' + roomCode + '/up'; }
 function downTopic(pid) { return TOPIC_PREFIX + '/' + roomCode + '/down/' + pid; }
+
+/** 分享链接。必须带通道标识 t，否则朋友可能连到另一条通道，永远收不到消息 */
+function shareUrl() {
+  return location.origin + location.pathname + '?room=' + roomCode +
+         (channelTag ? '&t=' + channelTag : '') +
+         (customRelay ? '&relay=' + encodeURIComponent(customRelay) : '');
+}
 
 /** 显示连接状态；出错时同时弹浮层，避免用户已切到大厅时看不到 */
 function netStatus(msg, isError) {
@@ -293,74 +325,55 @@ function netStatus(msg, isError) {
   }
 }
 
-/** 发布一条 JSON 消息 */
-function netSend(topic, obj) {
-  if (!mqttClient || !mqttClient.connected) return false;
-  try {
-    mqttClient.publish(topic, JSON.stringify(obj), { qos: 0 });
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-/** 连上 broker 之后的订阅与初始化 */
-function onBrokerReady(asHost) {
+/** 通道就绪后的初始化：房主起心跳，客户端发加入请求 */
+function onChannelReady(asHost) {
   if (asHost) {
-    mqttClient.subscribe(upTopic(), { qos: 0 }, err => {
-      if (err) { netStatus('❌ 订阅失败：' + err.message, true); return; }
-      // 心跳：让客户端知道房主还在
-      clearInterval(hostHeartbeatTimer);
-      hostHeartbeatTimer = setInterval(() => {
-        if (!gameState) return;
-        gameState.players.forEach(p => {
-          if (p.id !== 'host') netSend(downTopic(p.id), { type: 'hb' });
-        });
-      }, HOST_HEARTBEAT_MS);
-    });
+    // 心跳：让客户端知道房主还在（客户端 26 秒收不到任何消息即判定失联）
+    clearInterval(hostHeartbeatTimer);
+    hostHeartbeatTimer = setInterval(() => {
+      if (!gameState) return;
+      gameState.players.forEach(p => {
+        if (p.id !== 'host') netSendDown(p.id, { type: 'hb' });
+      });
+    }, HOST_HEARTBEAT_MS);
     return;
   }
 
-  // 客户端：只订阅属于自己的下行话题
-  mqttClient.subscribe(downTopic(myId), { qos: 0 }, err => {
-    if (err) { netStatus('❌ 订阅失败：' + err.message, true); return; }
+  // ---- 客户端 ----
+  netSendUp({ type: 'join_request', name: myName, id: myId });
+  netStatus('已连上中转服务器，正在等待房主响应…');
 
-    // 订阅就绪后再发加入请求，避免「先发后订」把消息丢掉
-    netSend(upTopic(), { type: 'join_request', name: myName, id: myId });
-    netStatus('已连上中转服务器，正在等待房主响应…');
+  // 进入大厅等待界面
+  showScr('scrLobby');
+  $('lbCode').innerText = roomCode;
+  $('lbUrl').value = shareUrl();
+  $('hostSettings').style.display = 'none';
+  $('lbBottom').innerHTML = '<p class="muted center">正在等待房主批准...</p>';
+  $('lbPlayers').innerHTML = '<p class="muted center">批准后可见</p>';
+  $('approveList').style.display = 'none';
 
-    // 进入大厅等待界面
-    showScr('scrLobby');
-    $('lbCode').innerText = roomCode;
-    $('lbUrl').value = location.origin + location.pathname + '?room=' + roomCode;
-    $('hostSettings').style.display = 'none';
-    $('lbBottom').innerHTML = '<p class="muted center">正在等待房主批准...</p>';
-    $('lbPlayers').innerHTML = '<p class="muted center">批准后可见</p>';
-    $('approveList').style.display = 'none';
+  // 重发加入请求：中继不做离线消息缓存，房主若晚一点才连上就会收不到第一条
+  let retries = 0;
+  clearInterval(joinRetryTimer);
+  joinRetryTimer = setInterval(() => {
+    retries += 1;
+    if (retries > JOIN_RETRY_MAX) {
+      clearInterval(joinRetryTimer); joinRetryTimer = null;
+      netStatus('❌ 房主没有响应：请确认房主已创建房间、页面仍开着，且房间号一致', true);
+      return;
+    }
+    netSendUp({ type: 'join_request', name: myName, id: myId });
+  }, JOIN_RETRY_MS);
 
-    // 重发加入请求：公共 broker 不保留离线消息，房主若晚一点才订阅就会收不到第一条
-    let retries = 0;
-    clearInterval(joinRetryTimer);
-    joinRetryTimer = setInterval(() => {
-      retries += 1;
-      if (retries > JOIN_RETRY_MAX) {
-        clearInterval(joinRetryTimer); joinRetryTimer = null;
-        netStatus('❌ 房主没有响应：请确认房主已创建房间、页面仍开着，且房间号一致', true);
-        return;
-      }
-      netSend(upTopic(), { type: 'join_request', name: myName, id: myId });
-    }, JOIN_RETRY_MS);
-
-    // 看门狗：长时间收不到房主任何消息就提示失联
-    lastHostMsgAt = Date.now();
-    clearInterval(hostWatchdogTimer);
-    hostWatchdogTimer = setInterval(() => {
-      if (Date.now() - lastHostMsgAt > HOST_LOST_MS) {
-        clearInterval(hostWatchdogTimer); hostWatchdogTimer = null;
-        netStatus('❌ 与房主失去联系：请确认房主的页面仍然开着', true);
-      }
-    }, 5000);
-  });
+  // 看门狗：长时间收不到房主任何消息就提示失联
+  lastHostMsgAt = Date.now();
+  clearInterval(hostWatchdogTimer);
+  hostWatchdogTimer = setInterval(() => {
+    if (Date.now() - lastHostMsgAt > HOST_LOST_MS) {
+      clearInterval(hostWatchdogTimer); hostWatchdogTimer = null;
+      netStatus('❌ 与房主失去联系：请确认房主的页面仍然开着', true);
+    }
+  }, 5000);
 }
 
 /** 收到网络消息的统一入口 */
@@ -371,7 +384,7 @@ function onNetMessage(data, asHost) {
       if (alreadyIn) {
         // 同一玩家重复请求（例如刷新页面重连）：直接补发批准与状态
         alreadyIn.connected = true;
-        netSend(downTopic(alreadyIn.id), { type: 'approved', settings: gameState.settings });
+        netSendDown(alreadyIn.id, { type: 'approved', settings: gameState.settings });
         broadcastState();
         return;
       }
@@ -401,87 +414,263 @@ function onNetMessage(data, asHost) {
   handleServerMsg(data);
 }
 
+/** 创建一个公共 MQTT broker 客户端（备用通道） */
+function newMqttClient(url, asHost) {
+  return mqttLite.connect(url, {
+    clientId: 'pk_' + (asHost ? 'h_' : 'c_') + Math.random().toString(16).slice(2, 12),
+    clean: true,
+    keepalive: 30,
+    connectTimeout: CONNECT_TIMEOUT,
+    // 掉线时由 broker 代发 leave，房主据此把该玩家标记为掉线（MQTT Last Will）
+    will: {
+      topic: upTopic(),
+      payload: JSON.stringify({ type: 'leave', id: myId }),
+      qos: 0,
+      retain: false,
+    },
+  });
+}
+
+/* ---------- 通道抽象：上层只调用 netSendUp / netSendDown / closeChannel ---------- */
+
+/** 当前通道对象；未连接时是空实现，避免上层到处判空 */
+let netChannel = {
+  sendUp() { return false; },
+  sendDown() { return false; },
+  close() {},
+};
+
+function installChannel(ch) { netChannel = ch; }
+function netSendUp(obj) { return netChannel.sendUp(obj); }
+function netSendDown(pid, obj) { return netChannel.sendDown(pid, obj); }
+function closeChannel() {
+  try { netChannel.close(); } catch (e) {}
+  netChannel = { sendUp() { return false; }, sendDown() { return false; }, close() {} };
+}
+
+/**
+ * 尝试一条自建中继通道。
+ * 中继只有一条 WebSocket，因此用 __to 字段标出收件人，由服务器原样广播给
+ * 同房间的其它连接，两端各自按 __to 过滤。
+ */
+function tryRelay(url, asHost, onOk, onNo) {
+  let sock;
+  try {
+    const sep = url.indexOf('?') >= 0 ? '&' : '?';
+    sock = new WebSocket(url + sep + 'room=' + encodeURIComponent(roomCode));
+  } catch (e) { onNo(); return; }
+
+  let settled = false;
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    try { sock.close(); } catch (e) {}
+    onNo();
+  }, CONNECT_TIMEOUT);
+
+  sock.onopen = () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+
+    sock.onmessage = (ev) => {
+      // 兼容文本帧与二进制帧：中继服务器发的是文本帧（字符串），
+      // 但万一将来改成二进制，这里也必须能解析 —— 否则会表现为「消息静默丢失」，
+      // 极难排查（曾因服务器误发二进制帧导致房主收不到加入请求）。
+      let text = ev.data;
+      if (typeof text !== 'string') {
+        try { text = new TextDecoder('utf-8').decode(text); } catch (e) { return; }
+      }
+      let data;
+      try { data = JSON.parse(text); } catch (e) { return; }
+      if (data.__sys) return;                 // 「有人加入/离开」的系统通知，当前逻辑用不到
+      const to = data.__to;
+      delete data.__to;
+      if (asHost) {
+        if (to === 'host') onNetMessage(data, true);
+      } else if (to === myId) {
+        onNetMessage(data, false);
+      }
+    };
+    sock.onclose = () => { netStatus('与中转服务器的连接已断开，请刷新页面重试', true); };
+
+    onOk({
+      sendUp: (obj) => {
+        if (sock.readyState !== 1) return false;
+        try { sock.send(JSON.stringify(Object.assign({ __to: 'host' }, obj))); return true; }
+        catch (e) { return false; }
+      },
+      sendDown: (pid, obj) => {
+        if (sock.readyState !== 1) return false;
+        try { sock.send(JSON.stringify(Object.assign({ __to: pid }, obj))); return true; }
+        catch (e) { return false; }
+      },
+      close: () => { try { sock.close(); } catch (e) {} },
+    });
+  };
+
+  sock.onerror = () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    try { sock.close(); } catch (e) {}
+    onNo();
+  };
+}
+
+/** 尝试一条公共 MQTT broker 通道（备用方案） */
+function tryMqtt(url, asHost, onOk, onNo) {
+  let c;
+  try { c = newMqttClient(url, asHost); } catch (e) { onNo(); return; }
+
+  let settled = false;
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    try { c.end(); } catch (e) {}
+    onNo();
+  }, CONNECT_TIMEOUT);
+
+  c.on('connect', () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    c.on('message', (topic, payload) => {
+      let data;
+      try { data = JSON.parse(payload); } catch (e) { return; }
+      onNetMessage(data, asHost);
+    });
+    onOk({
+      sendUp: (obj) => { try { c.publish(upTopic(), JSON.stringify(obj)); return true; } catch (e) { return false; } },
+      sendDown: (pid, obj) => { try { c.publish(downTopic(pid), JSON.stringify(obj)); return true; } catch (e) { return false; } },
+      close: () => { try { c.end(); } catch (e) {} },
+    });
+  });
+
+  const giveUp = () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    try { c.end(); } catch (e) {}
+    onNo();
+  };
+  c.on('error', giveUp);
+  c.on('close', giveUp);
+}
+
+/** 全部候选通道，自建中继优先于公共 broker */
+/** 生效的中继列表：把 ?relay= 指定的那台放在最前面（两端都带同一参数，下标才对得上） */
+function relayList() {
+  return customRelay ? [customRelay].concat(RELAYS) : RELAYS;
+}
+
+function channelList() {
+  const list = [];
+  relayList().forEach((url, i) => list.push({ tag: 'r' + i, url, relay: true }));
+  BROKERS.forEach((url, i) => list.push({ tag: 'm' + i, url, relay: false }));
+  return list;
+}
+
+/**
+ * 并行竞速所有候选通道，取最先连上的那条。
+ * 之所以并行而不是逐个串行回退 —— 公共通道经常整条挂掉，串行时第一条要等满超时，
+ * 用户会以为页面卡死了。全部失败则整体重试若干轮，以容忍间歇性抖动。
+ */
+function raceChannels(asHost, onReady, onFail) {
+  let attempt = 0;
+
+  function round() {
+    attempt += 1;
+    const list = channelList();
+    let remaining = list.length;
+    let won = false;
+
+    if (remaining === 0) { onFail(); return; }
+
+    list.forEach((ch) => {
+      const ok = (channel) => {
+        if (won) { try { channel.close(); } catch (e) {} return; }  // 已有赢家
+        won = true;
+        channelTag = ch.tag;
+        installChannel(channel);
+        onReady();
+      };
+      const no = () => {
+        if (won) return;
+        remaining -= 1;
+        if (remaining === 0) {
+          if (attempt < RACE_ROUNDS) setTimeout(round, RACE_RETRY_MS);
+          else onFail();
+        }
+      };
+      if (ch.relay) tryRelay(ch.url, asHost, ok, no);
+      else tryMqtt(ch.url, asHost, ok, no);
+    });
+  }
+
+  round();
+}
+
 /** 建立连接（asHost=true 为房主） */
 function initNet(asHost) {
   // 清理上一次的连接与定时器（例如重复点击「创建房间」）
   clearInterval(hostHeartbeatTimer); hostHeartbeatTimer = null;
   clearInterval(hostWatchdogTimer); hostWatchdogTimer = null;
   clearInterval(joinRetryTimer); joinRetryTimer = null;
-  if (mqttClient) { try { mqttClient.end(true); } catch (e) {} mqttClient = null; }
+  closeChannel();
+  const cameFromLink = channelTag;   // 客户端从链接里读到的通道标识
+  channelTag = '';
 
-  // 库没加载成功时明确报错，而不是静默卡死
   if (typeof mqttLite === 'undefined') {
     netStatus('❌ 通信库未加载：请确认 vendor/mqtt-lite.js 存在（直接双击打开会被浏览器的本地文件策略拦截，需用本地服务器）', true);
     return;
   }
-
-  let idx = 0;
-
-  function tryNextBroker() {
-    if (idx >= BROKERS.length) {
-      netStatus('❌ 中转服务器全部连不上，请检查网络后重试', true);
-      return;
-    }
-    const url = BROKERS[idx++];
-    netStatus(`正在连接中转服务器…（第 ${idx}/${BROKERS.length} 台）`);
-
-    let settled = false;
-    let c;
-    try {
-      c = mqttLite.connect(url, {
-        clientId: 'pk_' + (asHost ? 'h_' : 'c_') + Math.random().toString(16).slice(2, 12),
-        clean: true,
-        keepalive: 30,
-        connectTimeout: CONNECT_TIMEOUT,
-        reconnectPeriod: 0,   // 重连自己控制，便于切换 broker
-        // 掉线时由 broker 代发 leave，房主据此把该玩家标记为掉线
-        will: {
-          topic: upTopic(),
-          payload: JSON.stringify({ type: 'leave', id: myId }),
-          qos: 0,
-          retain: false,
-        },
-      });
-    } catch (e) {
-      tryNextBroker();
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { c.end(true); } catch (e) {}
-      tryNextBroker();
-    }, CONNECT_TIMEOUT);
-
-    c.on('connect', () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      mqttClient = c;
-      netStatus('');
-      onBrokerReady(asHost);
-    });
-
-    c.on('error', err => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        try { c.end(true); } catch (e) {}
-        tryNextBroker();
-        return;
-      }
-      netStatus('连接中断：' + ((err && err.message) || err), true);
-    });
-
-    c.on('message', (topic, payload) => {
-      let data;
-      try { data = JSON.parse(payload.toString()); } catch (e) { return; }
-      onNetMessage(data, asHost);
-    });
+  if (relayList().length === 0 && BROKERS.length === 0) {
+    netStatus('❌ 没有配置任何中转通道', true);
+    return;
   }
 
-  tryNextBroker();
+  const onReady = () => {
+    netStatus('');
+    // 房主拿到通道后立刻更新分享链接，朋友必须连同一条通道
+    if (asHost && $('lbUrl')) { $('lbUrl').value = shareUrl(); }
+    onChannelReady(asHost);
+  };
+
+  const onFail = () => {
+    netStatus('❌ 所有中转通道都连不上。请检查网络；房主可换个网络（如手机热点）重新建房', true);
+  };
+
+  // 客户端若从链接里拿到了通道标识，就只连那一条 ——
+  // 必须与房主在同一通道上，否则会表现为「房主没有响应」
+  if (!asHost && cameFromLink) {
+    const kind = cameFromLink.charAt(0);
+    const idx = parseInt(cameFromLink.slice(1), 10);
+    const url = kind === 'r' ? relayList()[idx] : BROKERS[idx];
+    if (url) {
+      netStatus('正在连接中转服务器…');
+      let settled = false;
+      const ok = (channel) => {
+        if (settled) return;
+        settled = true;
+        channelTag = cameFromLink;
+        installChannel(channel);
+        onReady();
+      };
+      const no = () => {
+        if (settled) return;
+        settled = true;
+        netStatus('❌ 连不上房主所在的中转通道。可能是你的网络屏蔽了它 —— 换个网络（手机流量 ↔ WiFi）刷新重试，或让房主重新建房', true);
+      };
+      if (kind === 'r') tryRelay(url, asHost, ok, no);
+      else tryMqtt(url, asHost, ok, no);
+      return;
+    }
+    // 链接里的通道在本端不存在（例如房主用了自建中继而你没配置）→ 落到下面的竞速
+  }
+
+  netStatus('正在连接中转服务器…');
+  raceChannels(asHost, onReady, onFail);
 }
 
 /* ================== 房主审批 ================== */
@@ -493,7 +682,7 @@ function approvePlayer(reqId) {
     bet: 0, folded: false, connected: true, isHost: false, cards: []
   });
   gameState.requests = gameState.requests.filter(r => r.id !== reqId);
-  netSend(downTopic(req.id), { type: 'approved', settings: gameState.settings });
+  netSendDown(req.id, { type: 'approved', settings: gameState.settings });
   renderLobby();
   broadcastState();
 }
@@ -501,7 +690,7 @@ function approvePlayer(reqId) {
 function rejectPlayer(reqId) {
   const req = gameState.requests.find(r => r.id === reqId);
   if(req) {
-    netSend(downTopic(req.id), { type: 'rejected' });
+    netSendDown(req.id, { type: 'rejected' });
     gameState.requests = gameState.requests.filter(r => r.id !== reqId);
     renderLobby();
   }
@@ -588,7 +777,7 @@ function broadcastState() {
   if (!isHost) return;   // 只有房主有权广播状态
   gameState.players.forEach(p => {
     if (p.id === 'host') return;
-    netSend(downTopic(p.id), { type: 'state', view: getViewFor(p.id) });
+    netSendDown(p.id, { type: 'state', view: getViewFor(p.id) });
   });
 }
 
@@ -624,7 +813,7 @@ function renderGame() {
 /* ================== 玩家操作 ================== */
 function sendAct(action) {
   if (isHost) handlePlayerAction('host', action);
-  else netSend(upTopic(), { type: 'action', id: myId, action });
+  else netSendUp({ type: 'action', id: myId, action });
 }
 
 function handlePlayerAction(playerId, action) {

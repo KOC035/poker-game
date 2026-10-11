@@ -1,0 +1,26 @@
+# Render Blueprint — 一键部署自建中继服务器
+#
+# 用法：
+#   1. 打开 https://render.com ，用 GitHub 账号登录（免费）
+#   2. New + → Blueprint → 选择本仓库 → Render 自动读取本文件
+#   3. 部署完成后得到形如 https://poker-relay-xxxx.onrender.com 的地址
+#   4. 自检：浏览器打开 <地址>/health ，返回 "ok" 即正常
+#   5. 把地址填到 index.html 里 RELAYS 数组（注意补上 wss:// 与 /ws 路径）：
+#        const RELAYS = ['wss://poker-relay-xxxx.onrender.com/ws'];
+#
+# 免费层闲置约 15 分钟会休眠，下一个人访问需等几十秒冷启动。
+# 页面底部会实时显示连接状态，等待期间不是卡死。
+
+services:
+  - type: web
+    name: poker-relay
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
