@@ -4,9 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>德州扑克 · 好友联机</title>
-<!-- PeerJS 本地自带：原实现走 cdn.jsdelivr.net，该域名在部分网络（含国内多数线路）不可达，
-     库加载失败会导致 Peer 未定义、建房完全无反应。改为本地文件，彻底去掉外部依赖。 -->
-<script src="vendor/peerjs.min.js"></script>
+<!-- MQTT over WebSocket 中继，本地自带。
+     不用 WebRTC 的原因见下方「网络层」注释：跨网络 NAT 打洞不可靠，且微信内置
+     浏览器对 RTCPeerConnection 支持很差，而需求要求微信里点开链接就能进。 -->
+<script src="vendor/mqtt.min.js"></script>
 <style>
 :root{--felt:#1d6b45;--felt2:#123f2a;--gold:#e8c66a;--bg:#0e1a14;--panel:#16281f;--line:#2c4a3a;--txt:#eef5ef;--dim:#9db3a5;--red:#e05252;--blue:#3c6ea3;}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -132,8 +133,11 @@ input,select{font-family:inherit;font-size:16px;padding:12px;border-radius:8px;b
 
 <script>
 /* ================== 全局状态 ================== */
-let peer = null;
-let conn = null;
+let mqttClient = null;          // 当前 MQTT 连接
+let hostHeartbeatTimer = null;  // 房主心跳定时器
+let hostWatchdogTimer = null;   // 客户端「与房主失联」看门狗
+let lastHostMsgAt = 0;          // 客户端最后一次收到房主消息的时间
+let joinRetryTimer = null;      // 客户端重发加入请求的定时器
 let isHost = false;
 let myId = 'p' + Math.random().toString(36).substr(2, 6);
 let roomCode = '';
@@ -205,7 +209,7 @@ window.onload = () => {
 function createRoom() {
   myName = $('inpName').value.trim() || '房主';
   localStorage.setItem('pokerName', myName);
-  roomCode = Math.random().toString(36).substr(2, 5).toUpperCase();
+  roomCode = makeRoomCode();
   isHost = true;
   gameState = {
     phase: 'lobby',
@@ -214,7 +218,7 @@ function createRoom() {
     pot: 0, board: [], currentTurn: null,
     settings: { type: 'cash', chips: 2000, sb: 10, bb: 20 }
   };
-  initPeer(true);
+  initNet(true);
   showScr('scrLobby');
   $('hostSettings').style.display = 'block';
   $('lbCode').innerText = roomCode;
@@ -225,40 +229,51 @@ function createRoom() {
 function joinRoom() {
   myName = $('inpName').value.trim() || '玩家';
   localStorage.setItem('pokerName', myName);
-  initPeer(false);
+  initNet(false);
 }
 
-/* ================== 网络层 (PeerJS) ================== */
+/* ================== 网络层（MQTT over WebSocket 中继） ==================
 
-/* 已实测可达的 STUN 服务器。不同网络下可用性不同，全部列出由 ICE 自行择优。
-   本机 NAT 实测为「锥形（端口无关映射）」，仅靠 STUN 打洞即可连通，无需 TURN。
-   若将来遇到对称 NAT 打不通，在数组里追加 TURN 即可：
-     { urls: 'turn:你的服务器:3478', username: '...', credential: '...' } */
-const ICE_SERVERS = [
-  { urls: 'stun:stun.miwifi.com:3478' },
-  { urls: 'stun:stun.chat.bilibili.com:3478' },
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun.nextcloud.com:443' },
+   为什么不再用 WebRTC P2P（这是上一版的失败原因）：
+     1. 跨网络不可靠 —— 手机 4G 与家用 WiFi 之间，运营商普遍使用 CGNAT / 对称 NAT，
+        STUN 打洞会失败，表现为「连接房主超时」。
+        ⚠️ 在同一台机器上开两个浏览器测试会走 host 候选直连成功，从而完全掩盖这个问题。
+     2. 微信内置浏览器（iOS WKWebView / Android X5）对 RTCPeerConnection 支持很差，
+        而需求明确要求「微信里点开链接就能进」。
+
+   本游戏只在两端之间传极小的 JSON 文本，中继转发完全够用，而且：
+     - 双方都是「主动外连」到 broker，不受任何 NAT / 防火墙限制
+     - 只依赖 WebSocket，所有浏览器（含微信内置）都支持
+     - 不需要 STUN / TURN / 自建信令服务器，零成本
+
+   话题设计（每房间双向，天然隔离）：
+     poker/<房间号>/up              客户端 → 房主：加入请求、出牌动作、掉线通知
+     poker/<房间号>/down/<玩家ID>    房主 → 指定客户端：批准、拒绝、状态、心跳
+*/
+
+/* 公共 MQTT broker，按顺序回退。两台均经实测可连通且能正常收发。 */
+const BROKERS = [
+  'wss://broker.emqx.io:8084/mqtt',      // EMQX 官方公共 broker（国内公司，优先）
+  'wss://broker.hivemq.com:8884/mqtt',   // HiveMQ 公共 broker，备用
 ];
 
-/* PeerJS 信令服务器，按顺序回退。
-   实测（本机真实网络）：
-     ✅ peerjs-server.onrender.com  → /peerjs/id 返回合法 id，可用
-     ❌ 0.peerjs.com                → TCP 可连但 TLS/WSS 握手被断（SNI 阻断），不可用
-   所以把可达的那台放在第一位，官方服务器仅作异地网络的备用。
-   ⚠️ onrender 那台是第三方公共实例，免费层会休眠（首次连接可能要等几十秒），
-      且不受我们控制。要长期稳定，请自建服务器并把地址加到本数组最前面，
-      自建方法见仓库 server/ 目录与 README。 */
-const SIGNALING_SERVERS = [
-  { host: 'peerjs-server.onrender.com', port: 443, path: '/', secure: true },
-  { host: '0.peerjs.com', port: 443, path: '/', secure: true },
-];
+const TOPIC_PREFIX = 'poker';
+const CONNECT_TIMEOUT = 20000;   // 单台 broker 的连接超时
+const HOST_HEARTBEAT_MS = 8000;  // 房主心跳间隔
+const HOST_LOST_MS = 26000;      // 客户端超这么久没收到房主消息即判定失联
+const JOIN_RETRY_MS = 6000;      // 加入请求重发间隔
+const JOIN_RETRY_MAX = 6;        // 最多重发次数
 
-const PEER_PREFIX = 'poker-host-';
-// 单个信令服务器的连接超时（毫秒）。
-// 必须留足冷启动时间：onrender 免费实例闲置约 15 分钟会休眠，
-// 下一个人打开页面时它需要几十秒才能唤醒。超时太短会导致「第一个来的人永远连不上」。
-const PEER_OPEN_TIMEOUT = 45000;
+/** 房间号：8 位。公共 broker 上话题是公开的，号码越长越不容易被猜中偷看 */
+function makeRoomCode() {
+  const chars = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+  let s = '';
+  for (let i = 0; i < 8; i++) s += chars.charAt(Math.floor(Math.random() * chars.length));
+  return s;
+}
+
+function upTopic() { return TOPIC_PREFIX + '/' + roomCode + '/up'; }
+function downTopic(pid) { return TOPIC_PREFIX + '/' + roomCode + '/down/' + pid; }
 
 /** 显示连接状态；出错时同时弹浮层，避免用户已切到大厅时看不到 */
 function netStatus(msg, isError) {
@@ -276,44 +291,43 @@ function netStatus(msg, isError) {
   }
 }
 
-/** 信令连上之后的动作：房主监听连接，客户端去连房主 */
-function onPeerOpen(p, asHost) {
+/** 发布一条 JSON 消息 */
+function netSend(topic, obj) {
+  if (!mqttClient || !mqttClient.connected) return false;
+  try {
+    mqttClient.publish(topic, JSON.stringify(obj), { qos: 0 });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** 连上 broker 之后的订阅与初始化 */
+function onBrokerReady(asHost) {
   if (asHost) {
-    p.on('connection', c => {
-      c.on('data', data => {
-        if (data.type === 'join_request') {
-          gameState.requests.push({ id: data.id, name: data.name, conn: c });
-          renderLobby();
-          toast(data.name + ' 请求加入');
-        } else if (data.type === 'action') {
-          handlePlayerAction(data.id, data.action);
-        }
-      });
-      c.on('close', () => {
-        const pl = gameState.players.find(x => x.conn === c);
-        if (pl) { pl.connected = false; }
-        gameState.requests = gameState.requests.filter(r => r.conn !== c);
-        renderLobby();
-      });
+    mqttClient.subscribe(upTopic(), { qos: 0 }, err => {
+      if (err) { netStatus('❌ 订阅失败：' + err.message, true); return; }
+      // 心跳：让客户端知道房主还在
+      clearInterval(hostHeartbeatTimer);
+      hostHeartbeatTimer = setInterval(() => {
+        if (!gameState) return;
+        gameState.players.forEach(p => {
+          if (p.id !== 'host') netSend(downTopic(p.id), { type: 'hb' });
+        });
+      }, HOST_HEARTBEAT_MS);
     });
     return;
   }
 
-  // ---- 客户端：连接房主 ----
-  conn = p.connect(PEER_PREFIX + roomCode, { reliable: true });
-  netStatus('已连上信令服务器，正在连接房主…');
+  // 客户端：只订阅属于自己的下行话题
+  mqttClient.subscribe(downTopic(myId), { qos: 0 }, err => {
+    if (err) { netStatus('❌ 订阅失败：' + err.message, true); return; }
 
-  const connTimer = setTimeout(() => {
-    if (!conn || !conn.open) {
-      netStatus('❌ 连接房主超时：请确认房主的页面仍开着，且房间号正确', true);
-    }
-  }, 15000);
+    // 订阅就绪后再发加入请求，避免「先发后订」把消息丢掉
+    netSend(upTopic(), { type: 'join_request', name: myName, id: myId });
+    netStatus('已连上中转服务器，正在等待房主响应…');
 
-  conn.on('open', () => {
-    clearTimeout(connTimer);
-    netStatus('');
-    conn.send({ type: 'join_request', name: myName, id: myId });
-    // 先显示大厅，但隐藏链接和玩家列表，显示等待批准
+    // 进入大厅等待界面
     showScr('scrLobby');
     $('lbCode').innerText = roomCode;
     $('lbUrl').value = location.origin + location.pathname + '?room=' + roomCode;
@@ -321,111 +335,151 @@ function onPeerOpen(p, asHost) {
     $('lbBottom').innerHTML = '<p class="muted center">正在等待房主批准...</p>';
     $('lbPlayers').innerHTML = '<p class="muted center">批准后可见</p>';
     $('approveList').style.display = 'none';
-  });
-  conn.on('data', data => handleServerMsg(data));
-  conn.on('close', () => {
-    clearTimeout(connTimer);
-    netStatus('与房主的连接已断开，请刷新重试', true);
-  });
-  conn.on('error', err => {
-    clearTimeout(connTimer);
-    netStatus('❌ 连接房主失败：' + (err && err.message ? err.message : err), true);
+
+    // 重发加入请求：公共 broker 不保留离线消息，房主若晚一点才订阅就会收不到第一条
+    let retries = 0;
+    clearInterval(joinRetryTimer);
+    joinRetryTimer = setInterval(() => {
+      retries += 1;
+      if (retries > JOIN_RETRY_MAX) {
+        clearInterval(joinRetryTimer); joinRetryTimer = null;
+        netStatus('❌ 房主没有响应：请确认房主已创建房间、页面仍开着，且房间号一致', true);
+        return;
+      }
+      netSend(upTopic(), { type: 'join_request', name: myName, id: myId });
+    }, JOIN_RETRY_MS);
+
+    // 看门狗：长时间收不到房主任何消息就提示失联
+    lastHostMsgAt = Date.now();
+    clearInterval(hostWatchdogTimer);
+    hostWatchdogTimer = setInterval(() => {
+      if (Date.now() - lastHostMsgAt > HOST_LOST_MS) {
+        clearInterval(hostWatchdogTimer); hostWatchdogTimer = null;
+        netStatus('❌ 与房主失去联系：请确认房主的页面仍然开着', true);
+      }
+    }, 5000);
   });
 }
 
-function initPeer(asHost) {
-  if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+/** 收到网络消息的统一入口 */
+function onNetMessage(data, asHost) {
+  if (asHost) {
+    if (data.type === 'join_request') {
+      const alreadyIn = gameState.players.find(p => p.id === data.id);
+      if (alreadyIn) {
+        // 同一玩家重复请求（例如刷新页面重连）：直接补发批准与状态
+        alreadyIn.connected = true;
+        netSend(downTopic(alreadyIn.id), { type: 'approved', settings: gameState.settings });
+        broadcastState();
+        return;
+      }
+      if (!gameState.requests.some(r => r.id === data.id)) {
+        gameState.requests.push({ id: data.id, name: data.name });
+        renderLobby();
+        toast(data.name + ' 请求加入');
+      }
+    } else if (data.type === 'action') {
+      handlePlayerAction(data.id, data.action);
+    } else if (data.type === 'leave') {
+      const pl = gameState.players.find(p => p.id === data.id);
+      if (pl) { pl.connected = false; }
+      gameState.requests = gameState.requests.filter(r => r.id !== data.id);
+      renderLobby();
+    }
+    return;
+  }
 
-  // 库没加载成功时明确报错，而不是静默卡死。
-  // 原实现没有任何 error 处理：CDN 被拦截时用户点「创建房间」会毫无反应。
-  if (typeof Peer === 'undefined') {
-    netStatus('❌ PeerJS 未加载：请确认 vendor/peerjs.min.js 存在（直接双击打开会被浏览器的本地文件策略拦截，需用本地服务器）', true);
+  // ---- 客户端 ----
+  lastHostMsgAt = Date.now();
+  if (data.type === 'hb') return;
+  // 收到房主任何实质响应就停止重发加入请求
+  if (data.type === 'approved' || data.type === 'rejected' || data.type === 'state') {
+    clearInterval(joinRetryTimer); joinRetryTimer = null;
+  }
+  handleServerMsg(data);
+}
+
+/** 建立连接（asHost=true 为房主） */
+function initNet(asHost) {
+  // 清理上一次的连接与定时器（例如重复点击「创建房间」）
+  clearInterval(hostHeartbeatTimer); hostHeartbeatTimer = null;
+  clearInterval(hostWatchdogTimer); hostWatchdogTimer = null;
+  clearInterval(joinRetryTimer); joinRetryTimer = null;
+  if (mqttClient) { try { mqttClient.end(true); } catch (e) {} mqttClient = null; }
+
+  // 库没加载成功时明确报错，而不是静默卡死
+  if (typeof mqtt === 'undefined') {
+    netStatus('❌ MQTT 库未加载：请确认 vendor/mqtt.min.js 存在（直接双击打开会被浏览器的本地文件策略拦截，需用本地服务器）', true);
     return;
   }
 
   let idx = 0;
 
-  function tryNextServer() {
-    if (idx >= SIGNALING_SERVERS.length) {
-      netStatus('❌ 信令服务器全部不可用，请检查网络后重试', true);
+  function tryNextBroker() {
+    if (idx >= BROKERS.length) {
+      netStatus('❌ 中转服务器全部连不上，请检查网络后重试', true);
       return;
     }
-    const cfg = SIGNALING_SERVERS[idx++];
-    netStatus(`正在连接信令服务器…（${idx}/${SIGNALING_SERVERS.length}，公共实例可能在冷启动，最多等 45 秒）`);
-
-    let p;
-    try {
-      p = new Peer(asHost ? PEER_PREFIX + roomCode : undefined, {
-        debug: 0,
-        config: { iceServers: ICE_SERVERS },
-        host: cfg.host,
-        port: cfg.port,
-        path: cfg.path,
-        secure: cfg.secure,
-      });
-    } catch (e) {
-      tryNextServer();
-      return;
-    }
+    const url = BROKERS[idx++];
+    netStatus(`正在连接中转服务器…（第 ${idx}/${BROKERS.length} 台）`);
 
     let settled = false;
-    const openTimer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try { p.destroy(); } catch (e) {}
-      tryNextServer();
-    }, PEER_OPEN_TIMEOUT);
-
-    p.on('open', () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(openTimer);
-      peer = p;
-
-      // 与信令服务器断开时自动重连（已有的 P2P 连接不受影响）
-      p.on('disconnected', () => {
-        if (!p.destroyed) { try { p.reconnect(); } catch (e) {} }
+    let c;
+    try {
+      c = mqtt.connect(url, {
+        clientId: 'pk_' + (asHost ? 'h_' : 'c_') + Math.random().toString(16).slice(2, 12),
+        clean: true,
+        keepalive: 30,
+        connectTimeout: CONNECT_TIMEOUT,
+        reconnectPeriod: 0,   // 重连自己控制，便于切换 broker
+        // 掉线时由 broker 代发 leave，房主据此把该玩家标记为掉线
+        will: {
+          topic: upTopic(),
+          payload: JSON.stringify({ type: 'leave', id: myId }),
+          qos: 0,
+          retain: false,
+        },
       });
+    } catch (e) {
+      tryNextBroker();
+      return;
+    }
 
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { c.end(true); } catch (e) {}
+      tryNextBroker();
+    }, CONNECT_TIMEOUT);
+
+    c.on('connect', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      mqttClient = c;
       netStatus('');
-      onPeerOpen(p, asHost);
+      onBrokerReady(asHost);
     });
 
-    p.on('error', err => {
-      const t = err && err.type;
-
-      // 连接阶段的错误 → 回退到下一台信令服务器
-      if (!settled && (t === 'network' || t === 'server-error' || t === 'socket-error' || t === 'socket-closed')) {
+    c.on('error', err => {
+      if (!settled) {
         settled = true;
-        clearTimeout(openTimer);
-        try { p.destroy(); } catch (e) {}
-        tryNextServer();
+        clearTimeout(timer);
+        try { c.end(true); } catch (e) {}
+        tryNextBroker();
         return;
       }
+      netStatus('连接中断：' + ((err && err.message) || err), true);
+    });
 
-      if (t === 'unavailable-id') {
-        // 房间号撞车，换一个重新建房
-        settled = true;
-        clearTimeout(openTimer);
-        try { p.destroy(); } catch (e) {}
-        roomCode = Math.random().toString(36).substr(2, 5).toUpperCase();
-        if ($('lbCode')) $('lbCode').innerText = roomCode;
-        if ($('lbUrl')) $('lbUrl').value = location.origin + location.pathname + '?room=' + roomCode;
-        toast('房间号已被占用，已自动换一个新号');
-        initPeer(true);
-        return;
-      }
-
-      if (t === 'peer-unavailable') {
-        netStatus('❌ 找不到房间 ' + roomCode + '：房主可能已关闭页面或房间号有误', true);
-        return;
-      }
-
-      netStatus('❌ 连接错误：' + (err && err.message ? err.message : t), true);
+    c.on('message', (topic, payload) => {
+      let data;
+      try { data = JSON.parse(payload.toString()); } catch (e) { return; }
+      onNetMessage(data, asHost);
     });
   }
 
-  tryNextServer();
+  tryNextBroker();
 }
 
 /* ================== 房主审批 ================== */
@@ -434,10 +488,10 @@ function approvePlayer(reqId) {
   if(!req) return;
   gameState.players.push({
     id: req.id, name: req.name, chips: gameState.settings.chips,
-    bet: 0, folded: false, connected: true, isHost: false, conn: req.conn, cards: []
+    bet: 0, folded: false, connected: true, isHost: false, cards: []
   });
   gameState.requests = gameState.requests.filter(r => r.id !== reqId);
-  req.conn.send({ type: 'approved', settings: gameState.settings });
+  netSend(downTopic(req.id), { type: 'approved', settings: gameState.settings });
   renderLobby();
   broadcastState();
 }
@@ -445,7 +499,7 @@ function approvePlayer(reqId) {
 function rejectPlayer(reqId) {
   const req = gameState.requests.find(r => r.id === reqId);
   if(req) {
-    req.conn.send({ type: 'rejected' });
+    netSend(downTopic(req.id), { type: 'rejected' });
     gameState.requests = gameState.requests.filter(r => r.id !== reqId);
     renderLobby();
   }
@@ -528,9 +582,11 @@ function getViewFor(playerId) {
 }
 
 function broadcastState() {
-  if(isHost) renderGame();
+  if (isHost) renderGame();
+  if (!isHost) return;   // 只有房主有权广播状态
   gameState.players.forEach(p => {
-    if(p.conn) p.conn.send({ type: 'state', view: getViewFor(p.id) });
+    if (p.id === 'host') return;
+    netSend(downTopic(p.id), { type: 'state', view: getViewFor(p.id) });
   });
 }
 
@@ -565,8 +621,8 @@ function renderGame() {
 
 /* ================== 玩家操作 ================== */
 function sendAct(action) {
-  if(isHost) handlePlayerAction('host', action);
-  else if(conn) conn.send({ type: 'action', id: myId, action });
+  if (isHost) handlePlayerAction('host', action);
+  else netSend(upTopic(), { type: 'action', id: myId, action });
 }
 
 function handlePlayerAction(playerId, action) {
