@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>德州扑克 · 好友联机</title>
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<!-- PeerJS 本地自带：原实现走 cdn.jsdelivr.net，该域名在部分网络（含国内多数线路）不可达，
+     库加载失败会导致 Peer 未定义、建房完全无反应。改为本地文件，彻底去掉外部依赖。 -->
+<script src="vendor/peerjs.min.js"></script>
 <style>
 :root{--felt:#1d6b45;--felt2:#123f2a;--gold:#e8c66a;--bg:#0e1a14;--panel:#16281f;--line:#2c4a3a;--txt:#eef5ef;--dim:#9db3a5;--red:#e05252;--blue:#3c6ea3;}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -55,6 +57,7 @@ input,select{font-family:inherit;font-size:16px;padding:12px;border-radius:8px;b
       <p style="color:var(--gold);margin-bottom:12px;">房间号：<b id="joinCodeDisplay"></b></p>
       <button class="btn-blue" style="width:100%;padding:16px;font-size:18px;" onclick="joinRoom()">申请加入房间</button>
     </div>
+    <p id="netStatus" class="muted center" style="margin:12px 0 0;min-height:18px;line-height:1.5;"></p>
   </div>
 </div>
 
@@ -226,45 +229,200 @@ function joinRoom() {
 }
 
 /* ================== 网络层 (PeerJS) ================== */
-function initPeer(asHost) {
-  if(peer) peer.destroy();
-  peer = new Peer(asHost ? 'poker-host-' + roomCode : undefined, { debug: 1 });
-  
-  peer.on('open', () => {
-    if(!asHost) {
-      conn = peer.connect('poker-host-' + roomCode);
-      conn.on('open', () => {
-        conn.send({ type: 'join_request', name: myName, id: myId });
-        // 手机端加入后，先显示大厅，但隐藏链接和玩家列表，显示等待批准
-        showScr('scrLobby');
-        $('lbCode').innerText = roomCode;
-        $('lbUrl').value = location.origin + location.pathname + '?room=' + roomCode;
-        $('hostSettings').style.display = 'none';
-        $('lbBottom').innerHTML = '<p class="muted center">正在等待房主批准...</p>';
-        $('lbPlayers').innerHTML = '<p class="muted center">批准后可见</p>';
-        $('approveList').style.display = 'none';
-      });
-      conn.on('data', data => handleServerMsg(data));
-      conn.on('close', () => alert('与房主断开连接，请刷新重试'));
-    }
-  });
 
-  if(asHost) {
-    peer.on('connection', c => {
+/* 已实测可达的 STUN 服务器。不同网络下可用性不同，全部列出由 ICE 自行择优。
+   本机 NAT 实测为「锥形（端口无关映射）」，仅靠 STUN 打洞即可连通，无需 TURN。
+   若将来遇到对称 NAT 打不通，在数组里追加 TURN 即可：
+     { urls: 'turn:你的服务器:3478', username: '...', credential: '...' } */
+const ICE_SERVERS = [
+  { urls: 'stun:stun.miwifi.com:3478' },
+  { urls: 'stun:stun.chat.bilibili.com:3478' },
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun.nextcloud.com:443' },
+];
+
+/* PeerJS 信令服务器，按顺序回退。
+   实测（本机真实网络）：
+     ✅ peerjs-server.onrender.com  → /peerjs/id 返回合法 id，可用
+     ❌ 0.peerjs.com                → TCP 可连但 TLS/WSS 握手被断（SNI 阻断），不可用
+   所以把可达的那台放在第一位，官方服务器仅作异地网络的备用。
+   ⚠️ onrender 那台是第三方公共实例，免费层会休眠（首次连接可能要等几十秒），
+      且不受我们控制。要长期稳定，请自建服务器并把地址加到本数组最前面，
+      自建方法见仓库 server/ 目录与 README。 */
+const SIGNALING_SERVERS = [
+  { host: 'peerjs-server.onrender.com', port: 443, path: '/', secure: true },
+  { host: '0.peerjs.com', port: 443, path: '/', secure: true },
+];
+
+const PEER_PREFIX = 'poker-host-';
+const PEER_OPEN_TIMEOUT = 25000;   // 单个信令服务器的连接超时（毫秒）；留足公共实例冷启动时间
+
+/** 显示连接状态；出错时同时弹浮层，避免用户已切到大厅时看不到 */
+function netStatus(msg, isError) {
+  const el = $('netStatus');
+  if (el) {
+    el.textContent = msg || '';
+    el.style.color = isError ? 'var(--red)' : 'var(--dim)';
+  }
+  const t = $('toast');
+  if (t && isError && msg) {
+    clearTimeout(window._netToastTimer);
+    t.textContent = msg;
+    t.style.display = 'block';
+    window._netToastTimer = setTimeout(() => { t.style.display = 'none'; }, 8000);
+  }
+}
+
+/** 信令连上之后的动作：房主监听连接，客户端去连房主 */
+function onPeerOpen(p, asHost) {
+  if (asHost) {
+    p.on('connection', c => {
       c.on('data', data => {
-        if(data.type === 'join_request') {
+        if (data.type === 'join_request') {
           gameState.requests.push({ id: data.id, name: data.name, conn: c });
           renderLobby();
-        } else if(data.type === 'action') {
+          toast(data.name + ' 请求加入');
+        } else if (data.type === 'action') {
           handlePlayerAction(data.id, data.action);
         }
       });
       c.on('close', () => {
-        const p = gameState.players.find(p => p.conn === c);
-        if(p) { p.connected = false; renderLobby(); }
+        const pl = gameState.players.find(x => x.conn === c);
+        if (pl) { pl.connected = false; }
+        gameState.requests = gameState.requests.filter(r => r.conn !== c);
+        renderLobby();
       });
     });
+    return;
   }
+
+  // ---- 客户端：连接房主 ----
+  conn = p.connect(PEER_PREFIX + roomCode, { reliable: true });
+  netStatus('已连上信令服务器，正在连接房主…');
+
+  const connTimer = setTimeout(() => {
+    if (!conn || !conn.open) {
+      netStatus('❌ 连接房主超时：请确认房主的页面仍开着，且房间号正确', true);
+    }
+  }, 15000);
+
+  conn.on('open', () => {
+    clearTimeout(connTimer);
+    netStatus('');
+    conn.send({ type: 'join_request', name: myName, id: myId });
+    // 先显示大厅，但隐藏链接和玩家列表，显示等待批准
+    showScr('scrLobby');
+    $('lbCode').innerText = roomCode;
+    $('lbUrl').value = location.origin + location.pathname + '?room=' + roomCode;
+    $('hostSettings').style.display = 'none';
+    $('lbBottom').innerHTML = '<p class="muted center">正在等待房主批准...</p>';
+    $('lbPlayers').innerHTML = '<p class="muted center">批准后可见</p>';
+    $('approveList').style.display = 'none';
+  });
+  conn.on('data', data => handleServerMsg(data));
+  conn.on('close', () => {
+    clearTimeout(connTimer);
+    netStatus('与房主的连接已断开，请刷新重试', true);
+  });
+  conn.on('error', err => {
+    clearTimeout(connTimer);
+    netStatus('❌ 连接房主失败：' + (err && err.message ? err.message : err), true);
+  });
+}
+
+function initPeer(asHost) {
+  if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+
+  // 库没加载成功时明确报错，而不是静默卡死。
+  // 原实现没有任何 error 处理：CDN 被拦截时用户点「创建房间」会毫无反应。
+  if (typeof Peer === 'undefined') {
+    netStatus('❌ PeerJS 未加载：请确认 vendor/peerjs.min.js 存在（直接双击打开会被浏览器的本地文件策略拦截，需用本地服务器）', true);
+    return;
+  }
+
+  let idx = 0;
+
+  function tryNextServer() {
+    if (idx >= SIGNALING_SERVERS.length) {
+      netStatus('❌ 信令服务器全部不可用，请检查网络后重试', true);
+      return;
+    }
+    const cfg = SIGNALING_SERVERS[idx++];
+    netStatus('正在连接信令服务器…');
+
+    let p;
+    try {
+      p = new Peer(asHost ? PEER_PREFIX + roomCode : undefined, {
+        debug: 0,
+        config: { iceServers: ICE_SERVERS },
+        host: cfg.host,
+        port: cfg.port,
+        path: cfg.path,
+        secure: cfg.secure,
+      });
+    } catch (e) {
+      tryNextServer();
+      return;
+    }
+
+    let settled = false;
+    const openTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { p.destroy(); } catch (e) {}
+      tryNextServer();
+    }, PEER_OPEN_TIMEOUT);
+
+    p.on('open', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(openTimer);
+      peer = p;
+
+      // 与信令服务器断开时自动重连（已有的 P2P 连接不受影响）
+      p.on('disconnected', () => {
+        if (!p.destroyed) { try { p.reconnect(); } catch (e) {} }
+      });
+
+      netStatus('');
+      onPeerOpen(p, asHost);
+    });
+
+    p.on('error', err => {
+      const t = err && err.type;
+
+      // 连接阶段的错误 → 回退到下一台信令服务器
+      if (!settled && (t === 'network' || t === 'server-error' || t === 'socket-error' || t === 'socket-closed')) {
+        settled = true;
+        clearTimeout(openTimer);
+        try { p.destroy(); } catch (e) {}
+        tryNextServer();
+        return;
+      }
+
+      if (t === 'unavailable-id') {
+        // 房间号撞车，换一个重新建房
+        settled = true;
+        clearTimeout(openTimer);
+        try { p.destroy(); } catch (e) {}
+        roomCode = Math.random().toString(36).substr(2, 5).toUpperCase();
+        if ($('lbCode')) $('lbCode').innerText = roomCode;
+        if ($('lbUrl')) $('lbUrl').value = location.origin + location.pathname + '?room=' + roomCode;
+        toast('房间号已被占用，已自动换一个新号');
+        initPeer(true);
+        return;
+      }
+
+      if (t === 'peer-unavailable') {
+        netStatus('❌ 找不到房间 ' + roomCode + '：房主可能已关闭页面或房间号有误', true);
+        return;
+      }
+
+      netStatus('❌ 连接错误：' + (err && err.message ? err.message : t), true);
+    });
+  }
+
+  tryNextServer();
 }
 
 /* ================== 房主审批 ================== */

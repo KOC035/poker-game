@@ -1,2 +1,22 @@
+# 依赖
+node_modules/
+
+# 包管理器锁文件（server 端在 Render 上以 npm install 部署，锁文件由平台生成）
+pnpm-lock.yaml
+package-lock.json
+
+# 本地环境变量
+.env
+.env.local
+
+# 编辑器与系统
 .openclaw/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 备份与日志
 *.bak
+*.log
+npm-debug.log*

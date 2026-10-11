@@ -1,0 +1,28 @@
+# Render Blueprint — 一键部署自建信令服务器
+#
+# 用法：把本仓库推到 GitHub → 打开 https://render.com → New + → Blueprint →
+#       选择本仓库 → Render 会自动读取本文件并创建下面的服务。
+#
+# 部署完成后会得到一个形如 https://<你的服务名>.onrender.com 的地址，
+# 把它填回 index.html 里 SIGNALING_SERVERS 数组的最前面即可。
+#
+# ⚠️ 免费层会在约 15 分钟无流量后休眠，下次连接需等待几十秒冷启动。
+#    想避免，可升级付费实例，或改用 Railway / Fly.io 等平台。
+
+services:
+  - type: web
+    name: poker-signaling
+    runtime: node
+    plan: free
+    region: singapore          # 就近选择；国内访问通常新加坡比美西快
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /peerjs/id
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: PEER_PROXIED
+        value: "true"
+      - key: PEER_PATH
+        value: "/"
