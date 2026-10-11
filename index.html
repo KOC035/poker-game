@@ -4,10 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>德州扑克 · 好友联机</title>
-<!-- MQTT over WebSocket 中继，本地自带。
-     不用 WebRTC 的原因见下方「网络层」注释：跨网络 NAT 打洞不可靠，且微信内置
-     浏览器对 RTCPeerConnection 支持很差，而需求要求微信里点开链接就能进。 -->
-<script src="vendor/mqtt.min.js"></script>
+<!-- MQTT over WebSocket 中继，本地自带的极简实现（vendor/mqtt-lite.js）。
+     为什么不用现成 mqtt.js：mqtt@5 含可选链/类字段等语法级新特性，Android 微信的老 X5
+     内核会直接解析失败；mqtt@4 虽是 ES5，但实测其 websocket-stream 层连不上 broker
+     （收不到 CONNACK，必然超时）。自研版只用 ES5 + 原生 WebSocket，体积也从几百 KB 降到几 KB。
+     不用 WebRTC 的原因见下方「网络层」注释。 -->
+<script src="vendor/mqtt-lite.js"></script>
 <style>
 :root{--felt:#1d6b45;--felt2:#123f2a;--gold:#e8c66a;--bg:#0e1a14;--panel:#16281f;--line:#2c4a3a;--txt:#eef5ef;--dim:#9db3a5;--red:#e05252;--blue:#3c6ea3;}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -408,8 +410,8 @@ function initNet(asHost) {
   if (mqttClient) { try { mqttClient.end(true); } catch (e) {} mqttClient = null; }
 
   // 库没加载成功时明确报错，而不是静默卡死
-  if (typeof mqtt === 'undefined') {
-    netStatus('❌ MQTT 库未加载：请确认 vendor/mqtt.min.js 存在（直接双击打开会被浏览器的本地文件策略拦截，需用本地服务器）', true);
+  if (typeof mqttLite === 'undefined') {
+    netStatus('❌ 通信库未加载：请确认 vendor/mqtt-lite.js 存在（直接双击打开会被浏览器的本地文件策略拦截，需用本地服务器）', true);
     return;
   }
 
@@ -426,7 +428,7 @@ function initNet(asHost) {
     let settled = false;
     let c;
     try {
-      c = mqtt.connect(url, {
+      c = mqttLite.connect(url, {
         clientId: 'pk_' + (asHost ? 'h_' : 'c_') + Math.random().toString(16).slice(2, 12),
         clean: true,
         keepalive: 30,

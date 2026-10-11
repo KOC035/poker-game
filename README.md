@@ -93,10 +93,23 @@ python -m http.server 8000
 poker-game/
 ├── index.html          # 全部页面结构 + 样式 + 游戏逻辑 + 网络层（单文件实现）
 ├── vendor/
-│   └── mqtt.min.js     # MQTT.js 5.10.1，本地自带（不依赖任何外部 CDN）
+│   └── mqtt-lite.js    # 自研极简 MQTT 3.1.1 客户端（仅 QoS 0），13KB，纯 ES5
 ├── .gitignore
 └── README.md
 ```
+
+### 为什么自己写 MQTT 客户端
+
+我们只需要「订阅话题 / 发消息 / 收消息」，QoS 0 足够，但现成库都有问题：
+
+| 方案 | 问题 |
+| --- | --- |
+| `mqtt@5`（329KB） | 用了**可选链 `?.`、类字段 `#x`、空值合并 `??`、BigInt 字面量**等**语法级**新特性。Android 微信的 X5 老内核（Chrome 77~79）会直接抛 `SyntaxError`，**整个文件不可用** —— 与当初 CDN 挂掉是同一种故障模式 |
+| `mqtt@4`（236KB） | 虽是 ES5，但实测其 `websocket-stream` 层连 `broker.emqx.io` 时**收不到 CONNACK**，必然 20 秒超时（已用调试日志 + WebSocket 拦截确认；原生 WebSocket 连同一个 URL 是通的） |
+| **`mqtt-lite.js`（13KB）** | 只用 ES5 + 原生 WebSocket，任何支持 WebSocket 的浏览器（含微信内置）都能跑 |
+
+实现覆盖 CONNECT（含 Last Will）/ CONNACK / SUBSCRIBE / SUBACK / PUBLISH / PINGREQ / PINGRESP / DISCONNECT，
+处理了粘包拆包、UTF-8 编解码（带 `TextEncoder` 缺失时的回退）、心跳保活。
 
 ### 历史沿革（避免被旧文件误导）
 
@@ -104,7 +117,7 @@ poker-game/
 | --- | --- | --- |
 | 最初 | `index.html` 单文件 + WebRTC P2P，PeerJS 走 `cdn.jsdelivr.net` | 该 CDN 在部分网络不可达 → 库加载失败 → 建房毫无反应 |
 | 中途 | 改用本地 PeerJS + 换可达的信令服务器 | 同机测试通过，但**跨网络 / 微信里仍然连不上** |
-| 现在 | **MQTT 中继**（本项目当前方案） | 不依赖 NAT 穿透，微信可用 |
+| 现在 | **MQTT 中继 + 自研 ES5 客户端**（本项目当前方案） | 不依赖 NAT 穿透，微信可用 |
 
 此外，早期曾有一套 `css/` + `js/{socket,ui,main,game-logic}.js` 的四层架构实现，
 但后来 `index.html` 被替换为单文件版本，那 5 个文件（约 125KB）再未被引用过，
