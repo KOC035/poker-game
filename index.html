@@ -38,10 +38,32 @@ input,select{font-family:inherit;font-size:16px;padding:12px;border-radius:8px;b
 .card-ui{width:48px;height:68px;border-radius:6px;background:#fff;color:#151515;font-weight:700;display:flex;flex-direction:column;justify-content:space-between;padding:4px;font-size:18px;box-shadow:0 2px 6px rgba(0,0,0,.5);}
 .card-ui.red{color:#d33;}
 .card-ui.back{background:repeating-linear-gradient(45deg,#1a3a6e,#1a3a6e 4px,#274e8a 4px,#274e8a 8px);border:2px solid #fff;color:transparent;}
+.card-ui.sm{width:34px;height:48px;font-size:12px;padding:3px;border-radius:4px;}
 #actionBar{background:#0b140f;border-top:1px solid var(--line);padding:12px;}
 .act-row{display:flex;gap:10px;margin-bottom:10px;}
 .act-btn{flex:1;min-height:50px;font-weight:600;font-size:16px;display:flex;align-items:center;justify-content:center;}
-#toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;display:none;z-index:99;}
+#toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;padding:10px 20px;border-radius:20px;font-size:14px;display:none;z-index:99;max-width:80vw;text-align:center;}
+.lb-chip{padding:6px 12px;background:#1d3a2a;border-radius:20px;font-size:14px;border:1px solid transparent;}
+.lb-chip.host{border-color:var(--gold);}
+.lb-chip.off{opacity:.5;text-decoration:line-through;}
+.lb-chip b{color:var(--gold);}
+.req-row{display:flex;justify-content:space-between;align-items:center;margin:8px 0;padding:8px;background:#0e1a14;border-radius:8px;gap:8px;}
+.btn-mini{padding:4px 12px;font-size:13px;width:auto;margin:0;}
+.btn-wide{width:100%;padding:16px;font-size:18px;}
+#raiseRow{margin-bottom:10px;}
+#raiseSlider{width:100%;margin:0;padding:0;-webkit-appearance:none;appearance:none;height:28px;background:transparent;}
+#raiseSlider::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:#2c4a3a;}
+#raiseSlider::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;margin-top:-9px;border-radius:50%;background:var(--gold);border:2px solid #221a05;}
+#raiseSlider::-moz-range-track{height:6px;border-radius:3px;background:#2c4a3a;}
+#raiseSlider::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:var(--gold);border:2px solid #221a05;}
+.raise-meta{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-top:2px;}
+.raise-meta b{color:var(--gold);font-size:14px;}
+#resultPanel{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:30;display:none;align-items:center;justify-content:center;padding:20px;}
+#resultPanel.on{display:flex;}
+.result-line{display:flex;justify-content:space-between;gap:12px;padding:4px 0;border-bottom:1px dashed var(--line);}
+.result-line:last-child{border-bottom:0;}
+.result-amt{color:var(--gold);font-weight:700;white-space:nowrap;}
+
 </style>
 </head>
 <body>
@@ -86,6 +108,8 @@ input,select{font-family:inherit;font-size:16px;padding:12px;border-radius:8px;b
       <input type="number" id="setSb" value="10">
       <input type="number" id="setBb" value="20">
     </div>
+    <button class="btn-blue" style="width:100%;margin-top:4px;" onclick="applySettings()">应用设置</button>
+    <p class="muted" style="margin:8px 0 0;">修改后请点「应用设置」；点「开始游戏」时也会自动读取</p>
   </div>
 
   <div class="card-panel">
@@ -121,12 +145,31 @@ input,select{font-family:inherit;font-size:16px;padding:12px;border-radius:8px;b
     <div id="myInfo" style="font-size:14px;color:var(--dim);flex:1;"></div>
   </div>
   <div id="actionBar" style="display:none;">
+    <div id="raiseRow" style="display:none;">
+      <input type="range" id="raiseSlider" min="0" max="100" step="1" value="0" oninput="updateRaiseLabel()">
+      <div class="raise-meta">
+        <span>最小 <b id="raiseMin">0</b></span>
+        <span>加注到 <b id="raiseVal">0</b></span>
+        <span>最大 <b id="raiseMax">0</b></span>
+      </div>
+    </div>
     <div class="act-row">
       <button class="btn-red act-btn" onclick="sendAct('fold')">弃牌</button>
-      <button class="btn-gray act-btn" onclick="sendAct('check')">过牌</button>
-      <button class="btn-blue act-btn" onclick="sendAct('call')">跟注</button>
-      <button class="btn-gold act-btn" onclick="sendAct('raise')">加注</button>
+      <button class="btn-gray act-btn" id="btnCheck" onclick="sendAct('check')">过牌</button>
+      <button class="btn-blue act-btn" id="btnCall" onclick="sendAct('call')">跟注</button>
+      <button class="btn-gold act-btn" id="btnRaise" onclick="sendAct('raise')">加注</button>
       <button class="btn-gold act-btn" onclick="sendAct('allin')">全下</button>
+    </div>
+  </div>
+
+  <!-- 结算层 -->
+  <div id="resultPanel">
+    <div class="card-panel" style="margin:0;width:100%;max-width:380px;">
+      <h3 id="resultTitle" class="center" style="color:var(--gold);margin:0 0 12px;"></h3>
+      <div id="resultBody"></div>
+      <button id="nextHandBtn" class="btn-gold btn-wide" style="margin-top:16px;" onclick="nextHand()">下一局</button>
+      <button id="rebuyBtn" class="btn-blue btn-wide" style="margin-top:10px;display:none;" onclick="requestRebuy()">申请补码</button>
+      <p id="nextHandHint" class="muted center" style="margin:10px 0 0;display:none;">等待房主开始下一局…</p>
     </div>
   </div>
 </div>
@@ -154,7 +197,14 @@ const SUITS = ['♠','♥','♦','♣'];
 /* ================== 工具函数 ================== */
 function $(id) { return document.getElementById(id); }
 function showScr(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('on')); $(id).classList.add('on'); }
-function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 2500); }
+let _toastTimer = null;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(_toastTimer);   // 清掉上一个提示的定时器，否则新提示会被提前关掉
+  _toastTimer = setTimeout(() => { t.style.display = 'none'; }, 2600);
+}
 function shuffle(a) { for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
 function makeDeck() { const d=[]; SUITS.forEach(s => { for(let r=2; r<=14; r++) d.push({r,s}); }); return shuffle(d); }
 function cardHTML(c, small) {
@@ -188,6 +238,12 @@ function eval5(cards) {
 }
 function compareScore(a, b) { for(let i=0; i<6; i++){ const x=a[i]||0, y=b[i]||0; if(x!==y) return x-y; } return 0; }
 function getHandScore(cards) {
+  // 翻牌前就结束（全体弃牌）时只有 2 张牌，凑不出 5 张组合。
+  // 旧实现会返回 null，导致结算时无人被判定为赢家、底池凭空消失。
+  if (!cards || cards.length < 5) {
+    const r = (cards || []).map(c => c.r).sort((a, b) => b - a);
+    return [0, ...r];
+  }
   let best = null;
   const combos = [];
   function combine(start, arr) { if(arr.length === 5) { combos.push(arr.slice()); return; } for(let i=start; i<cards.length; i++){ arr.push(cards[i]); combine(i+1, arr); arr.pop(); } }
@@ -217,22 +273,29 @@ window.onload = () => {
 
 /* ================== 建房 & 加房 ================== */
 function createRoom() {
-  myName = $('inpName').value.trim() || '房主';
+  myName = ($('inpName').value || '').trim().slice(0, 10) || '房主';
   localStorage.setItem('pokerName', myName);
   roomCode = makeRoomCode();
   isHost = true;
+  const settings = readSettings();
   gameState = {
     phase: 'lobby',
-    players: [{ id: 'host', name: myName, chips: 2000, bet: 0, folded: false, connected: true, isHost: true, cards: [] }],
+    players: [{
+      id: 'host', name: myName, isHost: true,
+      chips: settings.chips, bet: 0, totalBet: 0,
+      folded: false, allin: false, connected: true,
+      cards: [], lastAction: '', acted: false,
+    }],
     requests: [],
-    pot: 0, board: [], currentTurn: null,
-    settings: { type: 'cash', chips: 2000, sb: 10, bb: 20 }
+    deck: [], board: [], pot: 0, currentTurn: null,
+    dealerId: null, handNo: 0, lastResult: null,
+    settings,
   };
   initNet(true);
   showScr('scrLobby');
   $('hostSettings').style.display = 'block';
   $('lbCode').innerText = roomCode;
-  $('lbUrl').value = location.origin + location.pathname + '?room=' + roomCode;
+  $('lbUrl').value = shareUrl();
   renderLobby();
 }
 
@@ -698,13 +761,54 @@ function initNet(asHost) {
   raceChannels(asHost, onReady, onFail);
 }
 
+/* ================== 通用工具 ================== */
+
+/**
+ * HTML 转义。玩家昵称是从网络收到的，直接拼进 innerHTML 会导致 XSS
+ * （maxlength 只限制本机输入框，拦不住恶意客户端直接发请求）。
+ */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+const MAX_PLAYERS = 8;
+
+/** 牌型名称，用于结算展示 */
+const HAND_NAMES = ['高牌', '一对', '两对', '三条', '顺子', '同花', '葫芦', '四条', '同花顺'];
+function handName(score) {
+  if (!score) return '';
+  return HAND_NAMES[score[0]] || '';
+}
+
 /* ================== 房主审批 ================== */
+
 function approvePlayer(reqId) {
   const req = gameState.requests.find(r => r.id === reqId);
-  if(!req) return;
+  if (!req) return;
+
+  if (gameState.players.length >= MAX_PLAYERS) {
+    toast('房间已满（最多 ' + MAX_PLAYERS + ' 人）');
+    netSendDown(req.id, { type: 'rejected', reason: '房间已满' });
+    gameState.requests = gameState.requests.filter(r => r.id !== reqId);
+    renderLobby();
+    return;
+  }
+
+  let name = String(req.name || '玩家').slice(0, 10);
+  // 昵称去重，避免桌上出现两个同名玩家分不清
+  if (gameState.players.some(p => p.name === name)) {
+    let n = 2;
+    while (gameState.players.some(p => p.name === name + '(' + n + ')')) n++;
+    name = name + '(' + n + ')';
+  }
+
   gameState.players.push({
-    id: req.id, name: req.name, chips: gameState.settings.chips,
-    bet: 0, folded: false, connected: true, isHost: false, cards: []
+    id: req.id, name,
+    chips: gameState.settings.chips,
+    bet: 0, totalBet: 0, folded: false, allin: false,
+    connected: true, isHost: false, cards: [], lastAction: '', acted: false,
   });
   gameState.requests = gameState.requests.filter(r => r.id !== reqId);
   netSendDown(req.id, { type: 'approved', settings: gameState.settings });
@@ -714,33 +818,69 @@ function approvePlayer(reqId) {
 
 function rejectPlayer(reqId) {
   const req = gameState.requests.find(r => r.id === reqId);
-  if(req) {
+  if (req) {
     netSendDown(req.id, { type: 'rejected' });
     gameState.requests = gameState.requests.filter(r => r.id !== reqId);
     renderLobby();
   }
 }
 
+/* 用下标调用，避免把网络传来的 id 拼进 onclick 属性里（可被引号注入） */
+function approvePlayerByIndex(i) { const r = gameState.requests[i]; if (r) approvePlayer(r.id); }
+function rejectPlayerByIndex(i) { const r = gameState.requests[i]; if (r) rejectPlayer(r.id); }
+
+/* ================== 房主设置 ================== */
+
+/**
+ * 读取房主填写的手牌设置。
+ * 注意：这几个控件在旧版里完全没有被读取过 —— 房主怎么改都不生效。
+ */
+function readSettings() {
+  const num = (id, lo, hi, dflt) => {
+    const n = parseInt($(id).value, 10);
+    if (isNaN(n)) return dflt;
+    return Math.min(hi, Math.max(lo, n));
+  };
+  const sb = num('setSb', 1, 1000000, 10);
+  const bb = Math.max(num('setBb', 1, 1000000, 20), sb);   // 大盲不能小于小盲
+  const chips = num('setChips', bb * 10, 10000000, 2000);  // 至少 10 个大盲，否则一局就光
+  const type = $('setType').value === 'mtt' ? 'mtt' : 'cash';
+  return { type, chips, sb, bb };
+}
+
+function applySettings() {
+  if (!isHost || !gameState) return;
+  if (gameState.phase === 'playing') { toast('牌局进行中，暂时不能改设置'); return; }
+  gameState.settings = readSettings();
+  // 大厅阶段同步刷新所有玩家筹码
+  gameState.players.forEach(p => { p.chips = gameState.settings.chips; });
+  renderLobby();
+  broadcastState();
+  toast('设置已应用');
+}
+
 /* ================== 大厅渲染 ================== */
+
 function renderLobby() {
-  if(!isHost && gameState && gameState.phase === 'playing') return; // 手机端如果进入游戏了，不要覆盖大厅
-  
+  if (!isHost && gameState && gameState.phase === 'playing') return;
+  if (!gameState) return;
+
   $('lbCount').innerText = gameState.players.length;
   $('lbPlayers').innerHTML = gameState.players.map(p => `
-    <div style="padding:6px 12px;background:#1d3a2a;border-radius:20px;font-size:14px;${p.isHost?'border:1px solid var(--gold);':''}">
-      ${p.isHost?'👑 ':''}${p.name} <b style="color:var(--gold);">${p.chips}</b>
+    <div class="lb-chip${p.isHost ? ' host' : ''}${p.connected ? '' : ' off'}">
+      ${p.isHost ? '👑 ' : ''}${esc(p.name)} <b>${p.chips}</b>
     </div>
   `).join('');
 
   const approveList = $('approveList');
-  if(isHost && gameState.requests.length > 0) {
+  if (isHost && gameState.requests.length > 0) {
     approveList.style.display = 'block';
-    $('lbRequests').innerHTML = gameState.requests.map(r => `
-      <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;padding:8px;background:#0e1a14;border-radius:8px;">
-        <span>${r.name} 请求加入</span>
+    $('lbRequests').innerHTML = gameState.requests.map((r, i) => `
+      <div class="req-row">
+        <span>${esc(r.name)} 请求加入</span>
         <div>
-          <button class="btn-gold" style="padding:4px 12px;font-size:13px;width:auto;margin:0;" onclick="approvePlayer('${r.id}')">批准</button>
-          <button class="btn-red" style="padding:4px 12px;font-size:13px;width:auto;margin:0;" onclick="rejectPlayer('${r.id}')">拒绝</button>
+          <button class="btn-gold btn-mini" onclick="approvePlayerByIndex(${i})">批准</button>
+          <button class="btn-red btn-mini" onclick="rejectPlayerByIndex(${i})">拒绝</button>
         </div>
       </div>
     `).join('');
@@ -749,51 +889,151 @@ function renderLobby() {
   }
 
   const lbBottom = $('lbBottom');
-  if(isHost) {
-    lbBottom.innerHTML = `<button class="btn-gold" style="width:100%;padding:16px;font-size:18px;" onclick="startGame()" ${gameState.players.length < 2 ? 'disabled' : ''}>开始游戏 (${gameState.players.length}人)</button>`;
-  } else {
-    if(gameState.players && gameState.players.length > 0) {
-      lbBottom.innerHTML = `<p class="muted center">等待房主开始游戏...</p>`;
-    }
+  if (isHost) {
+    const canStart = gameState.players.filter(p => p.connected && p.chips > 0).length >= 2;
+    lbBottom.innerHTML =
+      `<button class="btn-gold btn-wide" onclick="startHand()" ${canStart ? '' : 'disabled'}>` +
+      `开始游戏 (${gameState.players.length}/${MAX_PLAYERS}人)</button>`;
+  } else if (gameState.players && gameState.players.length > 0) {
+    lbBottom.innerHTML = '<p class="muted center">等待房主开始游戏...</p>';
   }
 }
 
-/* ================== 开始游戏 ================== */
-function startGame() {
-  if(gameState.players.length < 2) { toast('至少需要 2 名玩家才能开始游戏'); return; }
-  const deck = makeDeck();
-  gameState.phase = 'playing';
-  gameState.pot = 0;
-  gameState.board = [];
-  gameState.players.forEach((p, i) => {
-    p.cards = [deck.pop(), deck.pop()];
-    p.folded = false;
-    p.bet = 0;
-    p.lastAction = '';
-    if(i === 0) { p.bet = gameState.settings.sb; p.chips -= gameState.settings.sb; gameState.pot += gameState.settings.sb; }
-    if(i === 1) { p.bet = gameState.settings.bb; p.chips -= gameState.settings.bb; gameState.pot += gameState.settings.bb; }
-  });
-  gameState.currentTurn = gameState.players[2 % gameState.players.length].id;
-  broadcastState();
+/* ================== 牌局引擎 ================== */
+
+/** 从牌堆抽一张。牌堆必须整局共用 —— 旧版每次 makeDeck() 重建牌堆，会发出重复的牌 */
+function draw() {
+  if (!gameState.deck || gameState.deck.length === 0) gameState.deck = makeDeck();
+  return gameState.deck.pop();
 }
 
-/* ================== 状态广播（防作弊核心） ================== */
+/** 座位顺序：从 startIdx 起，顺时针列出仍在局中的玩家 */
+function seatOrderFrom(startIdx) {
+  const n = gameState.players.length;
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const p = gameState.players[(startIdx + k) % n];
+    if (p.connected && p.chips > 0) out.push(p);
+  }
+  return out;
+}
+
+function postBlind(p, amt, label) {
+  if (!p) return;
+  const pay = Math.min(amt, p.chips);
+  p.chips -= pay;
+  p.bet += pay;
+  p.totalBet += pay;
+  if (p.chips === 0) p.allin = true;
+  p.lastAction = label;
+}
+
+/** 开始新的一局（可反复调用，实现连续多局） */
+function startHand() {
+  if (!gameState) return;
+  const ready = gameState.players.filter(p => p.connected && p.chips > 0);
+  if (ready.length < 2) { toast('至少需要 2 名有筹码的玩家'); return; }
+
+  // 读取设置；锦标赛模式每 10 手盲注翻倍（UI 上写了「盲注递增」，之前并未实现）
+  const baseSettings = readSettings();
+  gameState.handNo = (gameState.handNo || 0) + 1;
+  if (baseSettings.type === 'mtt' && gameState.handNo > 10) {
+    const lvl = Math.floor((gameState.handNo - 1) / 10);
+    baseSettings.sb *= Math.pow(2, lvl);
+    baseSettings.bb *= Math.pow(2, lvl);
+    if (gameState.handNo % 10 === 1) {
+      toast('盲注升到 ' + baseSettings.sb + '/' + baseSettings.bb);
+    }
+  }
+  gameState.settings = baseSettings;
+  gameState.deck = makeDeck();       // 每局一副新牌，局内绝不再重建
+  gameState.board = [];
+  gameState.pot = 0;
+  gameState.phase = 'playing';
+  gameState.lastResult = null;
+  gameState.currentTurn = null;
+
+  gameState.players.forEach(p => {
+    p.cards = [];
+    p.bet = 0; p.totalBet = 0; p.folded = false; p.allin = false;
+    p.lastAction = ''; p.acted = false;
+    if (!p.connected) p.folded = true;   // 掉线的人本局不参与
+  });
+
+  // 庄家按钮轮转
+  const seats = seatOrderFrom(0);
+  let di = seats.findIndex(p => p.id === gameState.dealerId);
+  if (di < 0) di = -1;
+  const nextDealer = seats[(di + 1) % seats.length];
+  gameState.dealerId = nextDealer.id;
+
+  // 发底牌（从庄家左边开始，两轮）
+  const n = gameState.players.length;
+  const startIdx = gameState.players.findIndex(p => p.id === nextDealer.id);
+  for (let round = 0; round < 2; round++) {
+    for (let k = 1; k <= n; k++) {
+      const p = gameState.players[(startIdx + k) % n];
+      if (p.connected && p.chips > 0 && !p.folded) p.cards.push(draw());
+    }
+  }
+
+  // 盲注：庄家左边是小盲
+  const order = seatOrderFrom(startIdx + 1);
+  const sbP = order[0];
+  const bbP = order[1] || order[0];
+  postBlind(sbP, gameState.settings.sb, '小盲');
+  postBlind(bbP, gameState.settings.bb, '大盲');
+  sbP.acted = false; bbP.acted = false;
+
+  // 翻牌前：大盲左边先行动
+  const first = order[2] || order[0];
+  gameState.currentTurn = first ? first.id : null;
+
+  recalcPot();     // 盲注已经进池，必须刷新显示（旧版这里显示「底池 0」）
+  broadcastState();
+  toast('第 ' + gameState.handNo + ' 局开始');
+}
+
+/* 兼容旧调用名 */
+function startGame() { startHand(); }
+
+/**
+ * 生成某个玩家可见的状态视图。
+ * 关键：别人的底牌在摊牌前一律给 null —— 这是防作弊的核心。
+ */
 function getViewFor(playerId) {
   const me = gameState.players.find(p => p.id === playerId);
-  if(!me) return null;
+  if (!me) return null;
+
+  const maxBet = Math.max(0, ...gameState.players.map(p => p.bet));
+  const toCall = Math.max(0, maxBet - me.bet);
+  const minRaiseTo = Math.min(maxBet + gameState.settings.bb, me.bet + me.chips);
+  const maxRaiseTo = me.bet + me.chips;
+
+  const revealAll = gameState.phase === 'result';
+
   return {
     phase: gameState.phase,
     pot: gameState.pot,
     board: gameState.board,
     players: gameState.players.map(p => ({
-      id: p.id, name: p.name, chips: p.chips, folded: p.folded, bet: p.bet,
-      isHost: p.isHost, connected: p.connected, lastAction: p.lastAction,
-      cards: (p.id === playerId || gameState.phase === 'result') ? p.cards : [null, null]
+      id: p.id, name: p.name, chips: p.chips, bet: p.bet, totalBet: p.totalBet,
+      folded: p.folded, allin: p.allin, connected: p.connected, isHost: p.isHost,
+      lastAction: p.lastAction,
+      cards: (p.id === playerId || revealAll) ? p.cards : p.cards.map(() => null),
     })),
     myCards: me.cards,
-    isMyTurn: gameState.currentTurn === playerId,
+    myId: playerId,
+    isMyTurn: gameState.currentTurn === playerId && gameState.phase === 'playing',
     settings: gameState.settings,
-    currentTurn: gameState.currentTurn
+    currentTurn: gameState.currentTurn,
+    dealerId: gameState.dealerId,
+    handNo: gameState.handNo || 0,
+    toCall, minRaiseTo, maxRaiseTo,
+    // 结算信息：谁赢、赢多少、什么牌型
+    lastResult: gameState.lastResult,
+    // 允许补码：积分赛 + 筹码见底
+    canRebuy: gameState.settings.type === 'cash' && me.chips <= 0,
   };
 }
 
@@ -806,108 +1046,441 @@ function broadcastState() {
   });
 }
 
-/* ================== 渲染牌桌 ================== */
+/* ================== 牌桌渲染 ================== */
+
 function renderGame() {
   showScr('scrGame');
   const v = isHost ? getViewFor('host') : window._clientView;
-  if(!v) return;
-  
+  if (!v) return;
+
+  const mySeatId = isHost ? 'host' : myId;
+
   $('gCode').innerText = roomCode;
   $('gPot').innerText = v.pot;
   $('gBlinds').innerText = v.settings.sb + '/' + v.settings.bb;
-  $('potLine').innerText = '底池 ' + v.pot;
+  $('potLine').innerText = v.pot > 0 ? '底池 ' + v.pot : '';
 
-  $('opponents').innerHTML = v.players.filter(p => p.id !== (isHost ? 'host' : myId)).map(p => `
-    <div class="opp ${p.folded ? 'fold' : ''} ${v.currentTurn === p.id ? 'turn' : ''}">
-      <div style="font-size:13px;">${p.name} ${p.isHost ? '👑' : ''}</div>
-      <div style="color:var(--gold);font-size:12px;">${p.chips}</div>
-      <div style="font-size:11px;color:#ffd97a;">${p.lastAction || ''} ${p.bet > 0 ? '('+p.bet+')' : ''}</div>
+  $('opponents').innerHTML = v.players.filter(p => p.id !== mySeatId).map(p => `
+    <div class="opp${p.folded ? ' fold' : ''}${v.currentTurn === p.id && v.phase === 'playing' ? ' turn' : ''}">
+      <div style="font-size:13px;">${esc(p.name)} ${p.isHost ? '👑' : ''}${p.id === v.dealerId ? ' 🎯' : ''}</div>
+      <div style="color:var(--gold);font-size:12px;">${p.chips}${p.allin ? ' 全下' : ''}</div>
+      <div style="font-size:11px;color:#ffd97a;">${esc(p.lastAction || '')}${p.bet > 0 ? ' (' + p.bet + ')' : ''}</div>
       <div style="margin-top:4px;display:flex;gap:2px;justify-content:center;">${p.cards.map(c => cardHTML(c, true)).join('')}</div>
     </div>
   `).join('');
 
-  $('boardCards').innerHTML = v.board.map(c => cardHTML(c, false)).join('') || '<span class="muted">等待发牌</span>';
+  $('boardCards').innerHTML = v.board.map(c => cardHTML(c, false)).join('') ||
+    '<span class="muted">等待发牌</span>';
   $('myCards').innerHTML = v.myCards.map(c => cardHTML(c, false)).join('');
-  
-  const me = v.players.find(p => p.id === (isHost ? 'host' : myId));
-  $('myInfo').innerHTML = `你的筹码: <b style="color:var(--gold);">${me.chips}</b> ${v.isMyTurn ? '<span style="color:var(--gold);">(轮到你了)</span>' : ''}`;
-  
-  $('actionBar').style.display = (v.isMyTurn && v.phase === 'playing') ? 'block' : 'none';
-}
 
-/* ================== 玩家操作 ================== */
-function sendAct(action) {
-  if (isHost) handlePlayerAction('host', action);
-  else netSendUp({ type: 'action', id: myId, action });
-}
+  const me = v.players.find(p => p.id === mySeatId);
+  const tags = [];
+  if (me) {
+    if (me.id === v.dealerId) tags.push('🎯庄家');
+    if (me.allin) tags.push('已全下');
+    if (me.folded) tags.push('已弃牌');
+  }
+  $('myInfo').innerHTML =
+    `你的筹码: <b style="color:var(--gold);">${me ? me.chips : 0}</b>` +
+    (tags.length ? ' <span style="color:var(--dim);">' + tags.join(' · ') + '</span>' : '') +
+    (v.isMyTurn ? ' <span style="color:var(--gold);">(轮到你了)</span>' : '');
 
-function handlePlayerAction(playerId, action) {
-  if(gameState.phase !== 'playing') return;
-  const p = gameState.players.find(pl => pl.id === playerId);
-  if(!p || p.folded || gameState.currentTurn !== playerId) return;
+  // 操作栏
+  const canAct = v.isMyTurn && v.phase === 'playing';
+  $('actionBar').style.display = canAct ? 'block' : 'none';
 
-  const maxBet = Math.max(...gameState.players.map(pl => pl.bet));
-  const toCall = maxBet - p.bet;
+  if (canAct) {
+    const toCall = v.toCall || 0;
+    $('btnCheck').style.display = toCall > 0 ? 'none' : '';
+    $('btnCall').style.display = toCall > 0 ? '' : 'none';
+    $('btnCall').textContent = toCall >= (me ? me.chips : 0) ? '全下跟注' : '跟注 ' + toCall;
 
-  if(action === 'fold') { p.folded = true; p.lastAction = '弃牌'; }
-  else if(action === 'check') { if(toCall > 0) return; p.lastAction = '过牌'; }
-  else if(action === 'call') { if(toCall <= 0) return; const pay = Math.min(toCall, p.chips); p.chips -= pay; p.bet += pay; gameState.pot += pay; p.lastAction = '跟注'; }
-  else if(action === 'raise') { const raiseAmt = gameState.settings.bb * 2; const total = toCall + raiseAmt; const pay = Math.min(total, p.chips); p.chips -= pay; p.bet += pay; gameState.pot += pay; p.lastAction = '加注到' + p.bet; }
-  else if(action === 'allin') { gameState.pot += p.chips; p.bet += p.chips; p.chips = 0; p.lastAction = '全下'; }
-
-  const active = gameState.players.filter(pl => !pl.folded);
-  if(active.length <= 1) { endHand(active); return; }
-  
-  const maxActiveBet = Math.max(...active.map(x => x.bet));
-  if(active.every(pl => pl.bet === maxActiveBet && pl.lastAction !== '')) {
-    if(gameState.board.length === 0) {
-      gameState.board.push(...[makeDeck().pop(), makeDeck().pop(), makeDeck().pop()]);
-      gameState.players.forEach(pl => { pl.bet = 0; pl.lastAction = ''; });
-    } else if(gameState.board.length === 3) {
-      gameState.board.push(makeDeck().pop());
-      gameState.players.forEach(pl => { pl.bet = 0; pl.lastAction = ''; });
-    } else if(gameState.board.length === 4) {
-      gameState.board.push(makeDeck().pop());
-      gameState.players.forEach(pl => { pl.bet = 0; pl.lastAction = ''; });
-    } else if(gameState.board.length === 5) {
-      endHand(active); return;
+    const canRaise = v.maxRaiseTo > (v.toCall || 0) && v.maxRaiseTo > v.minRaiseTo;
+    $('raiseRow').style.display = canRaise ? 'block' : 'none';
+    $('btnRaise').style.display = canRaise ? '' : 'none';
+    if (canRaise) {
+      const lo = Math.max(v.minRaiseTo, (v.toCall || 0) + v.settings.bb);
+      const hi = v.maxRaiseTo;
+      const sl = $('raiseSlider');
+      sl.min = String(lo);
+      sl.max = String(hi);
+      if (Number(sl.value) < lo || Number(sl.value) > hi) sl.value = String(lo);
+      updateRaiseLabel();
     }
   }
 
-  const curIdx = gameState.players.findIndex(pl => pl.id === playerId);
-  let nextIdx = (curIdx + 1) % gameState.players.length;
-  while(gameState.players[nextIdx].folded) nextIdx = (nextIdx + 1) % gameState.players.length;
-  gameState.currentTurn = gameState.players[nextIdx].id;
+  renderResultPanel(v);
+}
+
+function updateRaiseLabel() {
+  const sl = $('raiseSlider');
+  $('raiseMin').textContent = sl.min;
+  $('raiseMax').textContent = sl.max;
+  $('raiseVal').textContent = sl.value;
+}
+
+/** 结算面板：展示赢家与牌型，房主可点「下一局」 */
+function renderResultPanel(v) {
+  const panel = $('resultPanel');
+  const r = v.lastResult;
+  if (v.phase !== 'result' || !r) {
+    panel.classList.remove('on');
+    return;
+  }
+  panel.classList.add('on');
+  $('resultTitle').textContent = r.title || '本局结束';
+  $('resultBody').innerHTML = (r.lines || []).map(l =>
+    `<div class="result-line"><span>${esc(l.label)}</span><span class="result-amt">${esc(l.amount)}</span></div>`
+  ).join('') || '<p class="muted center">—</p>';
+
+  $('nextHandBtn').style.display = isHost ? '' : 'none';
+  $('nextHandHint').style.display = isHost ? 'none' : '';
+  $('rebuyBtn').style.display = (v.canRebuy && !isHost) ? '' : 'none';
+}
+
+/* ================== 玩家操作 ================== */
+
+function sendAct(action) {
+  if (gameState && gameState.phase !== 'playing' && action !== 'rebuy') return;
+
+  if (isHost) {
+    handlePlayerAction('host', action, Number($('raiseSlider').value));
+  } else {
+    const amount = Number($('raiseSlider').value);
+    netSendUp({ type: 'action', id: myId, action, amount });
+  }
+}
+
+function requestRebuy() {
+  if (isHost) { doRebuy('host'); return; }
+  netSendUp({ type: 'action', id: myId, action: 'rebuy' });
+}
+
+function doRebuy(playerId) {
+  const p = gameState.players.find(x => x.id === playerId);
+  if (!p) return;
+  if (gameState.settings.type !== 'cash') { toast('锦标赛模式不能补码'); return; }
+  if (p.chips > 0) { toast('还有筹码，不需要补码'); return; }
+  p.chips = gameState.settings.chips;
+  p.folded = true;   // 本局已出局，下局才能上桌
+  toast(p.name + ' 已补码到 ' + p.chips);
   broadcastState();
 }
 
-function endHand(active) {
-  gameState.phase = 'result';
-  let winner = active[0];
-  if(active.length > 1) {
-    let best = null;
-    active.forEach(p => {
-      const sc = getHandScore(p.cards.concat(gameState.board));
-      if(!best || compareScore(sc, best) > 0) { best = sc; winner = p; }
-    });
+/**
+ * 处理一个玩家的动作（只在房主端执行，房主是唯一裁判）。
+ * @param {string} playerId
+ * @param {string} action fold|check|call|raise|allin|rebuy
+ * @param {number} amount action==='raise' 时要加注到的总额（本街累计下注）
+ */
+function handlePlayerAction(playerId, action, amount) {
+  if (!gameState) return;
+
+  if (action === 'rebuy') { doRebuy(playerId); return; }
+  if (gameState.phase !== 'playing') return;
+
+  const p = gameState.players.find(pl => pl.id === playerId);
+  if (!p || p.folded || p.allin) return;
+  if (gameState.currentTurn !== playerId) return;
+
+  const maxBet = Math.max(0, ...gameState.players.map(pl => pl.bet));
+  const toCall = Math.max(0, maxBet - p.bet);
+
+  if (action === 'fold') {
+    p.folded = true;
+    p.lastAction = '弃牌';
+    p.acted = true;
+  } else if (action === 'check') {
+    if (toCall > 0) return;
+    p.lastAction = '过牌';
+    p.acted = true;
+  } else if (action === 'call') {
+    if (toCall <= 0) return;
+    const pay = Math.min(toCall, p.chips);
+    p.chips -= pay; p.bet += pay; p.totalBet += pay;
+    p.lastAction = p.chips === 0 ? '全下跟注' : '跟注';
+    p.acted = true;
+    if (p.chips === 0) p.allin = true;
+  } else if (action === 'raise') {
+    const minTo = Math.min(maxBet + gameState.settings.bb, p.bet + p.chips);
+    let target = Number(amount);
+    if (!isFinite(target) || target <= 0) target = minTo;
+    target = Math.max(target, minTo);
+    target = Math.min(target, p.bet + p.chips);   // 不能超过手上筹码
+    if (target <= maxBet) {
+      // 筹码不足以真正加注 → 退化为跟注/全下
+      const pay = Math.min(toCall, p.chips);
+      p.chips -= pay; p.bet += pay; p.totalBet += pay;
+      p.lastAction = p.chips === 0 ? '全下跟注' : '跟注';
+      p.acted = true;
+      if (p.chips === 0) p.allin = true;
+    } else {
+      const pay = target - p.bet;
+      p.chips -= pay; p.bet = target; p.totalBet += pay;
+      p.lastAction = p.chips === 0 ? '全下 ' + p.bet : '加注到 ' + p.bet;
+      p.acted = true;
+      if (p.chips === 0) p.allin = true;
+      // 有人加注，其余玩家需要重新行动
+      gameState.players.forEach(o => {
+        if (o !== p && !o.folded && !o.allin) o.acted = false;
+      });
+    }
+  } else if (action === 'allin') {
+    if (p.chips <= 0) return;
+    const pay = p.chips;
+    const newBet = p.bet + pay;
+    p.chips = 0; p.bet = newBet; p.totalBet += pay; p.allin = true;
+    p.acted = true;
+    p.lastAction = '全下 ' + newBet;
+    if (newBet > maxBet) {
+      gameState.players.forEach(o => {
+        if (o !== p && !o.folded && !o.allin) o.acted = false;
+      });
+    }
+  } else {
+    return;
   }
-  winner.chips += gameState.pot;
-  gameState.pot = 0;
+
+  // 结算完底池（下注筹码实时进 pot，便于显示）
+  recalcPot();
+
+  const alive = gameState.players.filter(pl => !pl.folded);
+  if (alive.length <= 1) { settleHand(alive); return; }
+
+  // 还能行动的人（未弃牌且未全下）
+  const actors = alive.filter(pl => !pl.allin);
+  if (actors.length <= 1) {
+    // 只剩一个人能行动：若他已跟平，直接逐街发完
+    const maxB = Math.max(0, ...alive.map(x => x.bet));
+    if (actors.length === 0 || (actors[0].acted && actors[0].bet === maxB)) {
+      runoutAndSettle();
+      return;
+    }
+  }
+
+  if (isBettingRoundComplete()) {
+    advanceStreet();
+    return;
+  }
+
+  // 轮到下一个还能行动的人
+  gameState.currentTurn = nextActorAfter(playerId);
   broadcastState();
-  setTimeout(() => toast('本局结束！赢家是：' + winner.name), 500);
+}
+
+/** 当前街是否下注轮结束：所有「未弃牌且未全下」的人都已行动且跟平最大注 */
+function isBettingRoundComplete() {
+  const actors = gameState.players.filter(p => !p.folded && !p.allin);
+  if (actors.length === 0) return true;
+  if (actors.length === 1) {
+    const maxBet = Math.max(0, ...gameState.players.filter(p => !p.folded).map(p => p.bet));
+    return actors[0].acted && actors[0].bet === maxBet;
+  }
+  const maxBet = Math.max(0, ...gameState.players.filter(p => !p.folded).map(p => p.bet));
+  return actors.every(p => p.acted && p.bet === maxBet);
+}
+
+/** 找下一个能行动的玩家（跳过弃牌与全下） */
+function nextActorAfter(playerId) {
+  const n = gameState.players.length;
+  const start = gameState.players.findIndex(p => p.id === playerId);
+  for (let k = 1; k <= n; k++) {
+    const p = gameState.players[(start + k) % n];
+    if (!p.folded && !p.allin && p.connected) return p.id;
+  }
+  return null;
+}
+
+/** 把当街下注汇总进底池显示 */
+function recalcPot() {
+  gameState.pot = gameState.players.reduce((s, p) => s + p.totalBet, 0);
+}
+
+/** 进入下一条街；四条街结束则摊牌 */
+function advanceStreet() {
+  const boardLen = gameState.board.length;
+  gameState.players.forEach(p => { p.bet = 0; p.acted = false; p.lastAction = ''; });
+
+  if (boardLen === 0) {
+    gameState.board.push(draw(), draw(), draw());
+  } else if (boardLen === 3) {
+    gameState.board.push(draw());
+  } else if (boardLen === 4) {
+    gameState.board.push(draw());
+  } else {
+    settleHand(gameState.players.filter(p => !p.folded));
+    return;
+  }
+
+  // 翻牌后由庄家左边第一位能行动的人先行动
+  const seats = seatOrderFrom(gameState.players.findIndex(p => p.id === gameState.dealerId) + 1);
+  const first = seats.find(p => !p.folded && !p.allin && p.connected);
+  gameState.currentTurn = first ? first.id : null;
+
+  broadcastState();
+}
+
+/** 所有人都全下时，一次性发完公共牌并结算 */
+function runoutAndSettle() {
+  while (gameState.board.length < 5) gameState.board.push(draw());
+  gameState.players.forEach(p => { p.bet = 0; p.acted = false; p.lastAction = ''; });
+  settleHand(gameState.players.filter(p => !p.folded));
+}
+
+/**
+ * 摊牌结算。支持分池（side pot）与平局平分。
+ * 分池做法：按每个玩家的总投入分层，每一层形成一个池，
+ * 该池只由「投入达到该层且未弃牌」的玩家争夺。
+ */
+function settleHand(contenders) {
+  gameState.phase = 'result';
+  recalcPot();
+  const totalPot = gameState.pot;
+
+  const alive = contenders.filter(p => !p.folded);
+
+  // 只剩一个人没弃牌：按规则直接收下全部底池，不需要比牌
+  if (alive.length === 1) {
+    const w = alive[0];
+    w.chips += totalPot;
+    gameState.pot = 0;
+    gameState.currentTurn = null;
+    gameState.lastResult = {
+      title: '第 ' + (gameState.handNo || 1) + ' 局结束 · ' + w.name + ' +' + totalPot,
+      lines: [{ label: '其余玩家弃牌，' + w.name + ' 直接赢得底池', amount: '+' + totalPot }],
+      showdown: '',
+    };
+    broadcastState();
+    toast('本局赢家：' + w.name + ' +' + totalPot);
+    return;
+  }
+
+  const scored = contenders.map(p => ({
+    p,
+    score: p.cards.length >= 2 ? getHandScore(p.cards.concat(gameState.board)) : null,
+  }));
+
+  // 分层建池
+  const levels = [...new Set(gameState.players.map(x => x.totalBet).filter(v => v > 0))].sort((a, b) => a - b);
+  const pots = [];
+  let prev = 0;
+  for (const lv of levels) {
+    const contributors = gameState.players.filter(x => x.totalBet >= lv);
+    const amount = (lv - prev) * contributors.length;
+    if (amount > 0) {
+      pots.push({ amount, eligible: scored.filter(s => !s.p.folded && s.p.totalBet >= lv) });
+    }
+    prev = lv;
+  }
+  // 兜底：若没有任何分层（都靠盲注被弃牌结束），把整个池给唯一未弃牌者
+  if (pots.length === 0 && totalPot > 0) {
+    pots.push({ amount: totalPot, eligible: scored.filter(s => !s.p.folded) });
+  }
+
+  const winByPlayer = new Map();
+  const lines = [];
+
+  pots.forEach((pot, idx) => {
+    if (pot.amount <= 0) return;
+    // 该层没有任何合格赢家（例如投入最多的玩家已弃牌）→ 退化为所有未弃牌者争夺，
+    // 否则这部分筹码会凭空消失。
+    if (pot.eligible.length === 0) {
+      pot.eligible = scored.filter(s => !s.p.folded);
+      if (pot.eligible.length === 0) return;
+    }
+
+    let best = null;
+    pot.eligible.forEach(s => {
+      if (!best || (s.score && compareScore(s.score, best.score) > 0)) best = s;
+    });
+    if (!best) return;
+    const winners = pot.eligible.filter(s => s.score && compareScore(s.score, best.score) === 0);
+
+    const share = Math.floor(pot.amount / winners.length);
+    let rest = pot.amount - share * winners.length;
+    winners.forEach((w, i) => {
+      const amt = share + (i < rest ? 1 : 0);   // 余数依次分给最先的人
+      w.p.chips += amt;
+      winByPlayer.set(w.p.id, (winByPlayer.get(w.p.id) || 0) + amt);
+    });
+
+    const potLabel = pots.length > 1 ? (idx === 0 ? '主池' : '边池' + (pots.length > 2 ? idx : '')) : '底池';
+    winners.forEach(w => {
+      const hn = handName(w.score);
+      const nameTxt = `${w.p.name}${hn ? '（' + hn + '）' : ''}`;
+      lines.push({
+        label: `${potLabel} ${pot.amount} → ${nameTxt}`,
+        amount: '+' + (share + (winners.indexOf(w) < rest ? 1 : 0)),
+      });
+    });
+  });
+
+  gameState.pot = 0;
+  gameState.currentTurn = null;
+
+  // 展示所有参战者的牌与牌型
+  const showdown = scored
+    .filter(s => s.p.cards.length >= 2)
+    .map(s => `${esc(s.p.name)}${s.p.folded ? '（已弃牌）' : '：' + handName(s.score)}`)
+    .join('　');
+
+  const winnersTxt = [...winByPlayer.entries()]
+    .map(([id, amt]) => {
+      const p = gameState.players.find(x => x.id === id);
+      return (p ? p.name : id) + ' +' + amt;
+    }).join('，');
+
+  gameState.lastResult = {
+    title: '第 ' + (gameState.handNo || 1) + ' 局结束 · ' + (winnersTxt || '无人获胜'),
+    lines,
+    showdown,
+  };
+
+  broadcastState();
+  if (winnersTxt) toast('本局赢家：' + winnersTxt);
+}
+
+/** 房主点「下一局」 */
+function nextHand() {
+  if (!isHost) return;
+  $('resultPanel').classList.remove('on');
+  const ready = gameState.players.filter(p => p.connected && p.chips > 0);
+  if (ready.length < 2) {
+    // 筹码不够开下一局 → 回大厅（可以补码/改设置）
+    gameState.phase = 'lobby';
+    gameState.lastResult = null;
+    showScr('scrLobby');
+    renderLobby();
+    broadcastState();
+    toast('有筹码的玩家不足 2 人，已回到大厅');
+    return;
+  }
+  startHand();
 }
 
 /* ================== 客户端接收 ================== */
 function handleServerMsg(data) {
-  if(data.type === 'approved') { 
-    toast('房主已批准加入！'); 
-    gameState = { settings: data.settings, players: [], phase: 'lobby' }; 
-    // 通知房主发送完整状态
+  if (data.type === 'approved') {
+    toast('房主已批准加入！');
+    gameState = {
+      settings: data.settings || (gameState && gameState.settings),
+      players: [], requests: [], phase: 'lobby',
+      pot: 0, board: [], deck: [], currentTurn: null, lastResult: null,
+    };
+    return;
   }
-  else if(data.type === 'rejected') { alert('房主拒绝了你的加入请求'); location.reload(); }
-  else if(data.type === 'state') { 
-    window._clientView = data.view; 
-    if(data.view.phase === 'playing') {
+  if (data.type === 'rejected') {
+    netStatus('❌ ' + (data.reason || '房主拒绝了你的加入请求'), true);
+    toast('房主拒绝了你');
+    // 不用 alert（微信里会很不友好），退回首页让用户重新申请
+    showScr('scrHome');
+    $('hostSection').style.display = 'block';
+    $('joinSection').style.display = 'none';
+    return;
+  }
+  if (data.type === 'state') {
+    window._clientView = data.view;
+    if (data.view.phase === 'playing' || data.view.phase === 'result') {
       renderGame();
     } else {
       gameState = data.view;
@@ -917,10 +1490,26 @@ function handleServerMsg(data) {
 }
 
 function copyLink() {
-  const url = $('lbUrl');
-  url.select();
-  document.execCommand('copy');
-  toast('链接已复制，去微信发给朋友吧！');
+  const el = $('lbUrl');
+  const text = el.value;
+  const fallback = () => {
+    try {
+      el.select();
+      el.setSelectionRange(0, 99999);
+      const ok = document.execCommand('copy');
+      toast(ok ? '链接已复制，去微信发给朋友吧' : '复制失败，请长按手动复制');
+    } catch (e) {
+      toast('复制失败，请长按手动复制');
+    }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(
+      () => toast('链接已复制，去微信发给朋友吧'),
+      fallback
+    );
+  } else {
+    fallback();
+  }
 }
 </script>
 </body>
